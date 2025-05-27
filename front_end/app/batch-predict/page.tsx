@@ -1,0 +1,144 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { PageHeader } from "@/components/layout/page-header";
+import { FileUpload } from "@/components/batch-predict/file-upload";
+import { BatchResult } from "@/components/batch-predict/batch-result";
+import { api } from "@/lib/api";
+import { BatchJob } from "@/types";
+import { toast } from "sonner";
+import { AlertCircleIcon } from "lucide-react";
+
+export default function BatchPredictPage() {
+  const [file, setFile] = useState<File | null>(null);
+  const [job, setJob] = useState<BatchJob | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    
+    const checkJobStatus = async () => {
+      if (!job || job.status === 'completed' || job.status === 'failed') {
+        if (interval) clearInterval(interval);
+        return;
+      }
+      
+      try {
+        const updatedJob = await api.getBatchJobStatus(job.jobId);
+        
+        // Only update state if there are actual changes
+        if (updatedJob.progress !== job.progress) {
+          setProgress(updatedJob.progress);
+        }
+        
+        if (updatedJob.status !== job.status) {
+          setJob(updatedJob);
+          
+          if (updatedJob.status === 'completed') {
+            toast.success('Processamento em lote concluído!');
+            if (interval) clearInterval(interval);
+          } else if (updatedJob.status === 'failed') {
+            setError('Falha no processamento em lote. Por favor, tente novamente.');
+            if (interval) clearInterval(interval);
+          }
+        }
+      } catch (error) {
+        console.error('Error checking job status:', error);
+        setError('Falha ao verificar status do processamento');
+        if (interval) clearInterval(interval);
+      }
+    };
+    
+    if (job && job.status === 'processing') {
+      // Initial check
+      checkJobStatus();
+      // Set up polling interval
+      interval = setInterval(checkJobStatus, 2000);
+    }
+    
+    // Cleanup function
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [job?.jobId, job?.status]); // Only depend on specific job properties
+
+  const handleFileSelect = (selectedFile: File) => {
+    setFile(selectedFile);
+    setError(null);
+  };
+
+  const handleUpload = async () => {
+    if (!file) return;
+    
+    try {
+      setProgress(0);
+      const { jobId } = await api.submitBatchJob(file);
+      setJob({
+        jobId,
+        progress: 0,
+        status: 'processing',
+        timestamp: new Date().toISOString(),
+        userId: 'current-user', // Would come from auth in real app
+      });
+      toast.info('Processamento em lote iniciado');
+    } catch (error) {
+      console.error('Error submitting batch job:', error);
+      setError('Falha ao enviar processamento em lote. Por favor, tente novamente.');
+    }
+  };
+
+  const handleCancel = () => {
+    setJob(null);
+    setFile(null);
+    setProgress(0);
+    setError(null);
+  };
+
+  // Separate useEffect for handling file upload
+  useEffect(() => {
+    if (file && !job) {
+      handleUpload();
+    }
+  }, [file]); // Only depend on file changes
+
+  return (
+    <div className="container py-6">
+      <PageHeader
+        title="Análise de Transações em Lote"
+        description="Faça upload e analise múltiplas transações de uma vez"
+      />
+
+      <div className="mt-8 max-w-3xl mx-auto">
+        {error && (
+          <div className="mb-6 p-4 border border-destructive/50 bg-destructive/10 rounded-md flex items-center gap-2 text-destructive">
+            <AlertCircleIcon className="h-5 w-5" />
+            <p>{error}</p>
+          </div>
+        )}
+
+        {job && job.status === 'completed' ? (
+          <BatchResult job={job} onStartNew={handleCancel} />
+        ) : (
+          <FileUpload 
+            onFileSelect={handleFileSelect}
+            isUploading={!!job && job.status === 'processing'}
+            progress={progress}
+            onCancel={handleCancel}
+          />
+        )}
+
+        <div className="mt-8 text-sm text-muted-foreground">
+          <h3 className="font-medium text-foreground mb-2">Informações sobre Processamento em Lote:</h3>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>Faça upload de um arquivo CSV com dados de transações para análise em massa</li>
+            <li>O CSV deve ter cabeçalhos e incluir todos os atributos relevantes da transação</li>
+            <li>Tamanho máximo do arquivo: 10MB</li>
+            <li>O tempo de processamento depende do número de transações (tipicamente 1-2 minutos)</li>
+            <li>Os resultados incluirão os dados originais mais as pontuações de fraude e decisões</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
