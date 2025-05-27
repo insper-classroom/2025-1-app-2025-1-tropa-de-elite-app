@@ -12,20 +12,20 @@ export default function Home() {
   return (
     <div className="container py-6">
       <PageHeader
-        title="Fraud Analytics Dashboard"
-        description="Real-time fraud detection metrics and analysis"
+        title="Painel de Análise de Fraudes"
+        description="Métricas e análise de detecção de fraudes em tempo real"
         actions={
           <div className="flex gap-3">
             <Link href="/single-predict">
               <Button>
                 <ActivityIcon className="mr-2 h-4 w-4" />
-                Analyze Transaction
+                Analisar Transação
               </Button>
             </Link>
             <Link href="/logs">
               <Button variant="outline">
                 <LineChart className="mr-2 h-4 w-4" />
-                View Logs
+                Ver Registros
               </Button>
             </Link>
           </div>

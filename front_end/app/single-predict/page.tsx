@@ -27,7 +27,7 @@ export default function SinglePredictPage() {
       setTransaction(data);
     } catch (error) {
       console.error("Error fetching transaction:", error);
-      toast.error("Failed to fetch transaction details");
+      toast.error("Falha ao buscar detalhes da transação");
     } finally {
       setLoading(false);
     }
@@ -41,10 +41,10 @@ export default function SinglePredictPage() {
     try {
       const result = await api.predictTransaction(transaction.id);
       setPredictionResult(result);
-      toast.success("Transaction analysis complete");
+      toast.success("Análise da transação concluída");
     } catch (error) {
       console.error("Error analyzing transaction:", error);
-      toast.error("Failed to analyze transaction");
+      toast.error("Falha ao analisar transação");
     } finally {
       setAnalyzing(false);
     }
@@ -53,8 +53,8 @@ export default function SinglePredictPage() {
   return (
     <div className="container py-6">
       <PageHeader
-        title="Single Transaction Analysis"
-        description="Analyze individual transactions for potential fraud"
+        title="Análise de Transação Individual"
+        description="Analise transações individuais para possíveis fraudes"
       />
 
       <div className="mt-6">
@@ -79,7 +79,7 @@ export default function SinglePredictPage() {
                 className="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
               >
                 {analyzing && <Loader2 className="h-4 w-4 animate-spin" />}
-                {analyzing ? "Analyzing..." : "Analyze Transaction"}
+                {analyzing ? "Analisando..." : "Analisar Transação"}
               </button>
             </div>
           )}

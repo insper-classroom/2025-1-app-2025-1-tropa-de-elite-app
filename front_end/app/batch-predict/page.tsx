@@ -36,17 +36,17 @@ export default function BatchPredictPage() {
           setJob(updatedJob);
           
           if (updatedJob.status === 'completed') {
-            toast.success('Batch processing complete!');
-            clearInterval(interval);
+            toast.success('Processamento em lote concluído!');
+            if (interval) clearInterval(interval);
           } else if (updatedJob.status === 'failed') {
-            setError('Batch processing failed. Please try again.');
-            clearInterval(interval);
+            setError('Falha no processamento em lote. Por favor, tente novamente.');
+            if (interval) clearInterval(interval);
           }
         }
       } catch (error) {
         console.error('Error checking job status:', error);
-        setError('Failed to check job status');
-        clearInterval(interval);
+        setError('Falha ao verificar status do processamento');
+        if (interval) clearInterval(interval);
       }
     };
     
@@ -81,10 +81,10 @@ export default function BatchPredictPage() {
         timestamp: new Date().toISOString(),
         userId: 'current-user', // Would come from auth in real app
       });
-      toast.info('Batch processing started');
+      toast.info('Processamento em lote iniciado');
     } catch (error) {
       console.error('Error submitting batch job:', error);
-      setError('Failed to submit batch job. Please try again.');
+      setError('Falha ao enviar processamento em lote. Por favor, tente novamente.');
     }
   };
 
@@ -105,8 +105,8 @@ export default function BatchPredictPage() {
   return (
     <div className="container py-6">
       <PageHeader
-        title="Batch Transaction Analysis"
-        description="Upload and analyze multiple transactions at once"
+        title="Análise de Transações em Lote"
+        description="Faça upload e analise múltiplas transações de uma vez"
       />
 
       <div className="mt-8 max-w-3xl mx-auto">
@@ -129,13 +129,13 @@ export default function BatchPredictPage() {
         )}
 
         <div className="mt-8 text-sm text-muted-foreground">
-          <h3 className="font-medium text-foreground mb-2">Batch Processing Information:</h3>
+          <h3 className="font-medium text-foreground mb-2">Informações sobre Processamento em Lote:</h3>
           <ul className="list-disc pl-5 space-y-1">
-            <li>Upload a CSV file with transaction data for bulk analysis</li>
-            <li>The CSV should have headers and include all relevant transaction attributes</li>
-            <li>Maximum file size: 10MB</li>
-            <li>Processing time depends on the number of transactions (typically 1-2 minutes)</li>
-            <li>Results will include the original data plus fraud scores and decisions</li>
+            <li>Faça upload de um arquivo CSV com dados de transações para análise em massa</li>
+            <li>O CSV deve ter cabeçalhos e incluir todos os atributos relevantes da transação</li>
+            <li>Tamanho máximo do arquivo: 10MB</li>
+            <li>O tempo de processamento depende do número de transações (tipicamente 1-2 minutos)</li>
+            <li>Os resultados incluirão os dados originais mais as pontuações de fraude e decisões</li>
           </ul>
         </div>
       </div>
