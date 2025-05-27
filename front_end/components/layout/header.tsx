@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ShieldAlertIcon } from "lucide-react";
+import Image from "next/image";
 
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -18,24 +19,26 @@ export function Header() {
   const pathname = usePathname();
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="container flex h-16 items-center">
-        <div className="mr-4 flex items-center space-x-2">
-          <ShieldAlertIcon className="h-6 w-6 text-primary" />
-          <span className="hidden font-bold sm:inline-block text-lg">
-            FraudGuard
-          </span>
+    <header className="sticky top-0 z-50 w-full border-b bg-[#ffe600] shadow-md">
+      <div className="max-w-5xl mx-auto flex h-16 items-center justify-between px-4">
+        <div className="flex items-center">
+          <img
+            src="/mercado-pago-logo.png"
+            width={140}
+            height={50}
+            className="bg-transparent object-contain"
+          />
         </div>
-        <nav className="flex flex-1 items-center space-x-1 sm:space-x-4">
+        <nav className="flex items-center space-x-1 sm:space-x-4">
           {navItems.map((item) => (
             <Link
               key={item.href}
               href={item.href}
               className={cn(
-                "px-3 py-2 text-sm font-medium transition-colors hover:text-primary",
+                "px-4 py-2 text-base font-semibold rounded-full transition-colors hover:bg-[#005ea6]/10 hover:text-[#005ea6]",
                 pathname === item.href
-                  ? "text-primary"
-                  : "text-muted-foreground"
+                  ? "text-[#005ea6] bg-white shadow"
+                  : "text-[#222]"
               )}
             >
               {item.name}
