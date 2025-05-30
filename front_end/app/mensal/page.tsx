@@ -1,9 +1,19 @@
+'use client'
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { useEffect, useState } from 'react';
 
 export default function MensalPage() {
+  const [modelos, setModelos] = useState<{label: string}[]>([]);
+
+  useEffect(() => {
+    fetch('http://localhost:8000/api/modelos')
+      .then(res => res.json())
+      .then(data => setModelos(data));
+  }, []);
+
   return (
     <main className="container mx-auto p-4">
       <h1 className="text-3xl font-bold mb-8 text-center">Análise Mensal</h1>
@@ -37,9 +47,9 @@ export default function MensalPage() {
                     <SelectValue placeholder="Selecione um modelo" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="model1">Modelo 1</SelectItem>
-                    <SelectItem value="model2">Modelo 2</SelectItem>
-                    <SelectItem value="model3">Modelo 3</SelectItem>
+                    {modelos.map((m) => (
+                      <SelectItem key={m.label} value={m.label}>{m.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,13 @@ export default function TransacaoPage() {
   const [resultado, setResultado] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modelos, setModelos] = useState([]);
+
+  useEffect(() => {
+    fetch('http://localhost:8000/api/modelos')
+      .then(res => res.json())
+      .then(data => setModelos(data));
+  }, []);
 
   const handleSubmit = async () => {
     if (!transacao || !modelo) {
@@ -70,9 +77,9 @@ export default function TransacaoPage() {
                     <SelectValue placeholder="Selecione um modelo" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="model1">Modelo 1</SelectItem>
-                    <SelectItem value="model2">Modelo 2</SelectItem>
-                    <SelectItem value="model3">Modelo 3</SelectItem>
+                    {modelos.map((m) => (
+                      <SelectItem key={m.label} value={m.label}>{m.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

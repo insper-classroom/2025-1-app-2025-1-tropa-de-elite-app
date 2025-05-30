@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,13 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [modelos, setModelos] = useState([]);
+
+  useEffect(() => {
+    fetch('http://localhost:8000/api/modelos')
+      .then(res => res.json())
+      .then(data => setModelos(data));
+  }, []);
 
   const handleFileChange = (field: keyof typeof files) => (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -115,9 +122,9 @@ export default function Home() {
                     <SelectValue placeholder="Selecione um modelo" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="model1">Modelo 1</SelectItem>
-                    <SelectItem value="model2">Modelo 2</SelectItem>
-                    <SelectItem value="model3">Modelo 3</SelectItem>
+                    {modelos.map((m) => (
+                      <SelectItem key={m.label} value={m.label}>{m.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
