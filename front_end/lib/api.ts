@@ -1,4 +1,4 @@
-import { BatchJob, LogEntry, LogsFilter, ModelInfo, PredictionResult, Transaction } from "@/types";
+import { BatchPredictionResult, ModelInfo, PredictionResult, ProcessedData, SearchResult } from "@/types";
 
 // Base API URL - configurable through environment
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
@@ -14,53 +14,82 @@ const handleResponse = async (response: Response) => {
 
 // Enhanced API client with proper error handling and typing
 export const api = {
-  // Get current model information with version tracking
-  getCurrentModel: async (): Promise<ModelInfo> => {
-    try {
-      const response = await fetch(`${API_URL}/models/current`);
-      const data = await handleResponse(response);
-      return {
-        ...data,
-        // Add DVC-specific information if available
-        dvcVersion: data.dvcVersion,
-        modelPath: data.modelPath,
-      };
-    } catch (error) {
-      console.error('Error fetching model info:', error);
-      throw error;
-    }
-  },
-
-  // Get transaction by ID with enhanced error handling
-  getTransaction: async (id: string): Promise<Transaction> => {
-    try {
-      const response = await fetch(`${API_URL}/transactions/${id}`);
-      return handleResponse(response);
-    } catch (error) {
-      console.error('Error fetching transaction:', error);
-      throw error;
-    }
-  },
-
-  // Predict transaction fraud with model versioning
-  predictTransaction: async (id: string): Promise<PredictionResult> => {
-    try {
-      const response = await fetch(`${API_URL}/predict/transaction/${id}`);
-      return handleResponse(response);
-    } catch (error) {
-      console.error('Error predicting transaction:', error);
-      throw error;
-    }
-  },
-
-  // Submit batch prediction job with progress tracking
-  submitBatchJob: async (file: File): Promise<{ jobId: string }> => {
+  // Upload files
+  uploadFiles: async (payersFile: File, sellersFile: File, transactionsFile: File): Promise<{ message: string; paths: string[] }> => {
     try {
       const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch(`${API_URL}/predict/batch`, {
+      formData.append('payers_file', payersFile);
+      formData.append('seller_terminals_file', sellersFile);
+      formData.append('transactional_train_file', transactionsFile);
+      
+      const response = await fetch(`${API_URL}/upload`, {
         method: 'POST',
+        body: formData,
+      });
+      return handleResponse(response);
+    } catch (error) {
+      console.error('Error uploading files:', error);
+      throw error;
+    }
+  },
+
+  // Process the uploaded data
+  processData: async (): Promise<ProcessedData> => {
+    try {
+      const response = await fetch(`${API_URL}/process`, {
+        method: 'POST',
+      });
+      return handleResponse(response);
+    } catch (error) {
+      console.error('Error processing data:', error);
+      throw error;
+    }
+  },
+
+  // Get list of models
+  getModels: async (): Promise<ModelInfo[]> => {
+    try {
+      const response = await fetch(`${API_URL}/modelos`);
+      return handleResponse(response);
+    } catch (error) {
+      console.error('Error fetching models:', error);
+      throw error;
+    }
+  },
+
+  // Search rows in the processed dataset
+  searchRows: async (query: string): Promise<SearchResult> => {
+    try {
+      const response = await fetch(`${API_URL}/search_rows?q=${encodeURIComponent(query)}`);
+      return handleResponse(response);
+    } catch (error) {
+      console.error('Error searching rows:', error);
+      throw error;
+    }
+  },
+
+  // Predict a single row
+  predictRow: async (nome: string, variante: string, versao: string, rowIndex: number): Promise<PredictionResult> => {
+    try {
+      const response = await fetch(`${API_URL}/predict_row?nome=${encodeURIComponent(nome)}&variante=${encodeURIComponent(variante)}&versao=${encodeURIComponent(versao)}&row_index=${rowIndex}`);
+      return handleResponse(response);
+    } catch (error) {
+      console.error('Error predicting row:', error);
+      throw error;
+    }
+  },
+
+  // Predict all rows in the dataset
+  predictAll: async (nome: string, variante: string, versao: string): Promise<BatchPredictionResult> => {
+    try {
+      const response = await fetch(`${API_URL}/predict_all?nome=${encodeURIComponent(nome)}&variante=${encodeURIComponent(variante)}&versao=${encodeURIComponent(versao)}`);
+      return handleResponse(response);
+    } catch (error) {
+      console.error('Error predicting all rows:', error);
+      throw error;
+    }
+  }
+};
         body: formData,
       });
       

@@ -7,11 +7,10 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import Link from 'next/link';
-import { api } from '@/lib/api-clean';
+import { api } from '@/lib/api-new';
 import { ProcessedData } from '@/types';
 
-export default function Home() {
-  const [files, setFiles] = useState({
+export default function Home() {  const [files, setFiles] = useState({
     payers: null as File | null,
     seller_terminals: null as File | null,
     transactional_train: null as File | null
@@ -23,10 +22,10 @@ export default function Home() {
   const [processedData, setProcessedData] = useState<ProcessedData | null>(null);
 
   const handleFileChange = (field: keyof typeof files) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
+    if (e.target.files && e.target.files[0]) {
       setFiles(prev => ({
         ...prev,
-        [field]: e.target.files![0]
+        [field]: e.target.files[0]
       }));
     }
   };
@@ -39,8 +38,7 @@ export default function Home() {
 
     try {
       setLoading(true);
-      setError(null);
-      await api.uploadFiles(
+      setError(null);      await api.uploadFiles(
         files.payers,
         files.seller_terminals,
         files.transactional_train
@@ -82,8 +80,7 @@ export default function Home() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4">
-              <div className="grid gap-2">
+            <div className="grid gap-4">              <div className="grid gap-2">
                 <Label htmlFor="payers">Arquivo de Payers (payers.feather)</Label>
                 <Input
                   id="payers"
@@ -200,7 +197,7 @@ export default function Home() {
             <div className="flex justify-center mt-4">
               <Link href="/modelos">
                 <Button size="lg">
-                  Ir para Operações
+                  Ir para Modelos
                 </Button>
               </Link>
             </div>

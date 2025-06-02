@@ -24,5 +24,5 @@ from app.api.routes.predict import router as predict_router
 from app.api.routes.data    import router as data_router
 
 app.include_router(models_router,  prefix="/api",        tags=["models"])
-app.include_router(predict_router, prefix="/api/predict", tags=["predict"])
-app.include_router(data_router,     prefix="/api/data",    tags=["data"])
+app.include_router(predict_router, prefix="/api",        tags=["predict"])
+app.include_router(data_router,    prefix="/api",        tags=["data"])
