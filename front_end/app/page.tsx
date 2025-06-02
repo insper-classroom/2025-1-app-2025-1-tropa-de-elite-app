@@ -1,5 +1,4 @@
 'use client'
-import { useState, useEffect } from 'react'
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -7,71 +6,106 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import Link from 'next/link';
-import { api } from '@/lib/api-clean';
-import { ProcessedData } from '@/types';
+import { useAppState } from '@/lib/app-context';
+import { useEffect, useState } from 'react';
 
 export default function Home() {
-  const [files, setFiles] = useState({
-    payers: null as File | null,
-    seller_terminals: null as File | null,
-    transactional_train: null as File | null
-  });
-  const [loading, setLoading] = useState(false);
-  const [processing, setProcessing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [uploadSuccess, setUploadSuccess] = useState(false);
-  const [processedData, setProcessedData] = useState<ProcessedData | null>(null);
+  const { 
+    files, 
+    uploadSuccess, 
+    processedData, 
+    loading, 
+    processing, 
+    error,
+    setFiles: setFile, 
+    uploadFiles, 
+    processData, 
+    resetError,
+    resetState
+  } = useAppState();
+  
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
 
-  const handleFileChange = (field: keyof typeof files) => (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Verificar conexão com o backend
+  useEffect(() => {
+    const checkBackendStatus = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/api/status');
+        if (response.ok) {
+          setBackendStatus('online');
+        } else {
+          setBackendStatus('offline');
+        }
+      } catch (error) {
+        console.error('Erro ao verificar backend:', error);
+        setBackendStatus('offline');
+      }
+    };
+    
+    checkBackendStatus();
+  }, []);
+
+  const handleFileChange = (field: string) => (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setFiles(prev => ({
-        ...prev,
-        [field]: e.target.files![0]
-      }));
+      setFile(field, e.target.files[0]);
     }
   };
 
   const handleUpload = async () => {
-    if (!files.payers || !files.seller_terminals || !files.transactional_train) {
-      setError('Por favor, selecione todos os arquivos feather');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-      await api.uploadFiles(
-        files.payers,
-        files.seller_terminals,
-        files.transactional_train
-      );
-
-      setUploadSuccess(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao processar o upload');
-      setUploadSuccess(false);
-    } finally {
-      setLoading(false);
-    }
+    await uploadFiles();
   };
 
   const handleProcessData = async () => {
-    try {
-      setProcessing(true);
-      setError(null);
-
-      const data = await api.processData();
-      setProcessedData(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro ao processar os dados');
-    } finally {
-      setProcessing(false);
-    }
+    await processData();
   };
 
   return (
     <main className="container mx-auto p-4">
       <h1 className="text-3xl font-bold mb-8 text-center">Sistema de Detecção de Fraudes</h1>
+
+      {backendStatus === 'offline' && (
+        <Alert variant="destructive" className="mb-6">
+          <AlertDescription>
+            <div className="flex flex-col gap-1">
+              <span className="font-semibold">O servidor backend não está acessível.</span>
+              <span className="text-sm">
+                Verifique se o servidor está em execução em http://localhost:8000 ou se há problemas de rede.
+                As funcionalidades de análise e upload de arquivos não funcionarão até que o servidor esteja online.
+              </span>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="mt-2 self-start"
+                onClick={() => {
+                  setBackendStatus('checking');
+                  fetch('http://localhost:8000/api/status')
+                    .then(res => {
+                      if (res.ok) setBackendStatus('online');
+                      else setBackendStatus('offline');
+                    })
+                    .catch(() => setBackendStatus('offline'));
+                }}
+              >
+                Tentar reconectar
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+      
+      {backendStatus === 'checking' && (
+        <Alert className="mb-6">
+          <AlertDescription>
+            Verificando conexão com o servidor de backend...
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {error && (
+        <Alert variant="destructive" className="mb-6">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       <div className="grid gap-6">
         <Card>
@@ -138,6 +172,20 @@ export default function Home() {
               >
                 {processing ? 'Processando...' : 'Gerar Features'}
               </Button>
+              
+              {processedData && (
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    if (window.confirm('Isso irá limpar todos os dados carregados e resultados. Deseja continuar?')) {
+                      resetState();
+                    }
+                  }}
+                >
+                  Limpar Dados e Reiniciar
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>

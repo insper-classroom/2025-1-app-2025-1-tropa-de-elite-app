@@ -8,6 +8,11 @@ router = APIRouter()
 
 MODELS_INDEX = Path(__file__).resolve().parents[3] / "models" / "models_index.yaml"
 
+@router.get("/status")
+def verificar_status():
+    """Endpoint simples para verificar se a API está online."""
+    return {"status": "online", "message": "API está funcionando normalmente"}
+
 @router.get("/modelos")
 def listar_modelos():
     modelos = []

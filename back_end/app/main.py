@@ -9,10 +9,10 @@ logger.add(sys.stdout, serialize=True, level="INFO")
 
 app = FastAPI(title="Fraud Detection API")
 
-# Habilita CORS para o front-end em localhost:3000
+# Habilita CORS para o front-end em localhost:3000 e 3001
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -22,7 +22,9 @@ app.add_middleware(
 from app.api.routes.models  import router as models_router
 from app.api.routes.predict import router as predict_router
 from app.api.routes.data    import router as data_router
+from app.api.routes.logs    import router as logs_router
 
 app.include_router(models_router,  prefix="/api",        tags=["models"])
 app.include_router(predict_router, prefix="/api",        tags=["predict"])
 app.include_router(data_router,    prefix="/api",        tags=["data"])
+app.include_router(logs_router,    prefix="/api/logs",   tags=["logs"])

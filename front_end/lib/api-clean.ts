@@ -1,15 +1,30 @@
 import { BatchPredictionResult, ModelInfo, PredictionResult, ProcessedData, SearchResult } from "@/types";
 
 // Base API URL - configurable through environment
-const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
 // Helper for handling response errors with better error messages
 const handleResponse = async (response: Response) => {
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Network response was not ok' }));
-    throw new Error(error.message || `HTTP error! status: ${response.status}`);
+    const error = await response.json().catch(() => ({ 
+      message: `Erro na API: ${response.status} ${response.statusText}` 
+    }));
+    throw new Error(error.message || `Erro HTTP: status ${response.status}`);
   }
   return response.json();
+};
+
+// Função auxiliar para lidar com erros de rede
+const handleNetworkError = (error: any, operation: string) => {
+  console.error(`Erro em ${operation}:`, error);
+  if (error.message === "Failed to fetch") {
+    throw new Error(`Erro de conexão com o servidor. Verifique se o backend está sendo executado em http://localhost:8000.`);
+  } else if (error.cause?.code === 'ECONNREFUSED') {
+    throw new Error(`Conexão recusada ao tentar acessar o servidor. Verifique se o backend está sendo executado em http://localhost:8000.`);
+  } else if (error.cause?.code === 'ETIMEDOUT') {
+    throw new Error(`Tempo esgotado ao tentar acessar o servidor. Verifique sua conexão de rede e se o backend está em execução.`);
+  }
+  throw error;
 };
 
 // Enhanced API client with proper error handling and typing
@@ -45,15 +60,13 @@ export const api = {
       throw error;
     }
   },
-
   // Get list of models
   getModels: async (): Promise<ModelInfo[]> => {
     try {
       const response = await fetch(`${API_URL}/modelos`);
       return handleResponse(response);
     } catch (error) {
-      console.error('Error fetching models:', error);
-      throw error;
+      return handleNetworkError(error, 'getModels');
     }
   },
 
@@ -63,8 +76,7 @@ export const api = {
       const response = await fetch(`${API_URL}/search_rows?q=${encodeURIComponent(query)}`);
       return handleResponse(response);
     } catch (error) {
-      console.error('Error searching rows:', error);
-      throw error;
+      return handleNetworkError(error, 'searchRows');
     }
   },
 
@@ -74,8 +86,7 @@ export const api = {
       const response = await fetch(`${API_URL}/predict_row?nome=${encodeURIComponent(nome)}&variante=${encodeURIComponent(variante)}&versao=${encodeURIComponent(versao)}&row_index=${rowIndex}`);
       return handleResponse(response);
     } catch (error) {
-      console.error('Error predicting row:', error);
-      throw error;
+      return handleNetworkError(error, 'predictRow');
     }
   },
 
@@ -85,8 +96,7 @@ export const api = {
       const response = await fetch(`${API_URL}/predict_all?nome=${encodeURIComponent(nome)}&variante=${encodeURIComponent(variante)}&versao=${encodeURIComponent(versao)}`);
       return handleResponse(response);
     } catch (error) {
-      console.error('Error predicting all rows:', error);
-      throw error;
+      return handleNetworkError(error, 'predictAll');
     }
   }
 };
