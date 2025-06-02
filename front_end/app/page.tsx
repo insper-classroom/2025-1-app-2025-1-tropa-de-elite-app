@@ -11,26 +11,33 @@ import Link from 'next/link';
 export default function Home() {
   const [files, setFiles] = useState({
     transacoes: null as File | null,
-    usuarios: null as File | null,
-    produtos: null as File | null
+    usuarios:   null as File | null,
+    produtos:   null as File | null
   });
-  const [modelo, setModelo] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [modelos, setModelos] = useState([]);
+  const [modelo, setModelo]     = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState<string | null>(null);
+  const [success, setSuccess]   = useState(false);
+  const [modelos, setModelos]   = useState<Array<{label:string}>>([]);
+
+  // Se estiver usando proxy no Next.js:
+  const API_BASE = '';
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/modelos')
+    fetch(`${API_BASE}/api/modelos`)
       .then(res => res.json())
-      .then(data => setModelos(data));
+      .then(data => setModelos(data))
+      .catch(err => {
+        console.error(err);
+        setError('Não foi possível carregar modelos');
+      });
   }, []);
 
   const handleFileChange = (field: keyof typeof files) => (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setFiles(prev => ({
         ...prev,
-        [field]: e.target.files![0]
+        [field]: e.target.files[0]
       }));
     }
   };
@@ -44,14 +51,13 @@ export default function Home() {
     try {
       setLoading(true);
       setError(null);
-      
-      const formData = new FormData();
-      formData.append('transacoes', files.transacoes);
-      formData.append('usuarios', files.usuarios);
-      formData.append('produtos', files.produtos);
-      formData.append('modelo', modelo);
 
-      const response = await fetch('http://localhost:8000/api/upload', {
+      const formData = new FormData();
+      formData.append('transactions_file', files.transacoes);
+      formData.append('payers_file',       files.usuarios);
+      formData.append('sellers_file',      files.produtos);
+
+      const response = await fetch(`${API_BASE}/api/data/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -61,11 +67,7 @@ export default function Home() {
       }
 
       setSuccess(true);
-      setFiles({
-        transacoes: null,
-        usuarios: null,
-        produtos: null
-      });
+      setFiles({ transacoes: null, usuarios: null, produtos: null });
       setModelo('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao processar o upload');
@@ -77,7 +79,7 @@ export default function Home() {
   return (
     <main className="container mx-auto p-4">
       <h1 className="text-3xl font-bold mb-8 text-center">Sistema de Detecção de Fraudes</h1>
-      
+
       <div className="grid gap-6">
         <Card>
           <CardHeader>
@@ -90,28 +92,28 @@ export default function Home() {
             <div className="grid gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="file1">Arquivo de Transações</Label>
-                <Input 
-                  id="file1" 
-                  type="file" 
-                  accept=".csv,.xlsx" 
+                <Input
+                  id="file1"
+                  type="file"
+                  accept=".feather"
                   onChange={handleFileChange('transacoes')}
                 />
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="file2">Arquivo de Usuários</Label>
-                <Input 
-                  id="file2" 
-                  type="file" 
-                  accept=".csv,.xlsx" 
+                <Input
+                  id="file2"
+                  type="file"
+                  accept=".feather"
                   onChange={handleFileChange('usuarios')}
                 />
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="file3">Arquivo de Produtos</Label>
-                <Input 
-                  id="file3" 
-                  type="file" 
-                  accept=".csv,.xlsx" 
+                <Input
+                  id="file3"
+                  type="file"
+                  accept=".feather"
                   onChange={handleFileChange('produtos')}
                 />
               </div>
@@ -123,7 +125,9 @@ export default function Home() {
                   </SelectTrigger>
                   <SelectContent>
                     {modelos.map((m) => (
-                      <SelectItem key={m.label} value={m.label}>{m.label}</SelectItem>
+                      <SelectItem key={m.label} value={m.label}>
+                        {m.label}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -141,8 +145,8 @@ export default function Home() {
                 </Alert>
               )}
 
-              <Button 
-                className="w-full" 
+              <Button
+                className="w-full"
                 onClick={handleSubmit}
                 disabled={loading}
               >
@@ -163,7 +167,6 @@ export default function Home() {
               </CardHeader>
             </Card>
           </Link>
-
           <Link href="/mensal">
             <Card className="cursor-pointer hover:bg-accent/50 transition-colors">
               <CardHeader>
@@ -177,5 +180,5 @@ export default function Home() {
         </div>
       </div>
     </main>
-  );
+  )
 }
