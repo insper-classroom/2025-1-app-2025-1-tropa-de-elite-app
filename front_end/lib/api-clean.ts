@@ -7,9 +7,9 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 const handleResponse = async (response: Response) => {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ 
-      message: `Error: ${response.status} ${response.statusText}` 
+      message: `Erro na API: ${response.status} ${response.statusText}` 
     }));
-    throw new Error(error.message || `HTTP error! status: ${response.status}`);
+    throw new Error(error.message || `Erro HTTP: status ${response.status}`);
   }
   return response.json();
 };
@@ -43,7 +43,8 @@ export const api = {
       });
       return handleResponse(response);
     } catch (error) {
-      return handleNetworkError(error, 'uploadFiles');
+      console.error('Error uploading files:', error);
+      throw error;
     }
   },
 
@@ -55,10 +56,10 @@ export const api = {
       });
       return handleResponse(response);
     } catch (error) {
-      return handleNetworkError(error, 'processData');
+      console.error('Error processing data:', error);
+      throw error;
     }
   },
-
   // Get list of models
   getModels: async (): Promise<ModelInfo[]> => {
     try {
@@ -88,6 +89,7 @@ export const api = {
       return handleNetworkError(error, 'predictRow');
     }
   },
+
   // Predict all rows in the dataset
   predictAll: async (nome: string, variante: string, versao: string): Promise<BatchPredictionResult> => {
     try {
@@ -95,39 +97,6 @@ export const api = {
       return handleResponse(response);
     } catch (error) {
       return handleNetworkError(error, 'predictAll');
-    }
-  },
-  
-  // Submit batch prediction job (stub for compatibility)
-  submitBatchJob: async (file: File): Promise<{ jobId: string }> => {
-    try {
-      return { jobId: 'mock-job-id' }; // Mock implementation
-    } catch (error) {
-      return handleNetworkError(error, 'submitBatchJob');
-    }
-  },
-  
-  // Get batch job status (stub for compatibility)
-  getBatchJobStatus: async (jobId: string): Promise<any> => {
-    try {
-      return {
-        jobId,
-        progress: 100,
-        status: 'completed',
-        timestamp: new Date().toISOString(),
-        userId: 'user-1'
-      }; // Mock implementation
-    } catch (error) {
-      return handleNetworkError(error, 'getBatchJobStatus');
-    }
-  },
-  
-  // Get logs (stub for compatibility)
-  getLogs: async (filters?: any): Promise<any[]> => {
-    try {
-      return []; // Empty array for mock implementation
-    } catch (error) {
-      return handleNetworkError(error, 'getLogs');
     }
   }
 };
