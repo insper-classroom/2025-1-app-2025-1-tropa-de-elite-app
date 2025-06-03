@@ -22,11 +22,15 @@ from scripts.preprocess import process_pipeline
 app = FastAPI(title="Fraud Detection API")
 
 # Configuração de diretórios e arquivos
+# Configuração de diretórios e arquivos
 UPLOAD_DIR = Path("/tmp/uploads")
 FEATURES_PATH = Path("/tmp/features.parquet")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL_PATH = Path("model/sem_desacordo_v1.0.0.joblib")
+# Usar caminho absoluto para o modelo
+MODEL_PATH = Path('../model/dummy_model.joblib')
+# ou
+# MODEL_PATH = Path(r"c:\Users\mateu\OneDrive\Documentos\Sprint-4\2025-1-app-2025-1-tropa-de-elite-app\back_end\api\model\sem_desacordo_v1.0.0.joblib")
 
 # Configuração da conexão com o banco de dados
 DATABASE_URL = "postgresql://neondb_owner:npg_3Ci2vZGmBofM@ep-morning-mouse-acjafuzl-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require"
@@ -491,7 +495,6 @@ async def upload_and_merge(
             detail=error_detail
         )
     
-
 @app.post("/predict-from-merged")
 def predict_from_merged(
     # Filtros
@@ -540,8 +543,8 @@ def predict_from_merged(
             filtered_df = filtered_df[filtered_df['transaction_id'].str.contains(transaction_id, na=False)]
         
         # Filtro por BIN
-        if bin_number and 'transaction_id' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['transaction_id'].str.startswith(bin_number, na=False)]
+        if bin_number and 'bin_number' in filtered_df.columns:
+            filtered_df = filtered_df[filtered_df['bin_number'].str.startswith(bin_number, na=False)]
         
         # Filtros de valor
         if min_amount is not None and 'tx_amount' in filtered_df.columns:
@@ -597,9 +600,41 @@ def predict_from_merged(
         print(f"Aplicando paginação: página {page} de {total_pages} ({start_idx+1}-{end_idx} de {total_records} registros)")
         paged_df = filtered_df.iloc[start_idx:end_idx].copy()
         
-        # 5. Carrega o modelo
+        # 5. Carrega o modelo ou cria um modelo simples se não encontrar
         print("Carregando modelo...")
-        model = joblib.load(MODEL_PATH)
+        try:
+            if MODEL_PATH.exists():
+                model = joblib.load(MODEL_PATH)
+                print("Modelo carregado com sucesso!")
+            else:
+                print(f"AVISO: Modelo não encontrado em {MODEL_PATH}. Criando modelo simples para teste...")
+                # Importa RandomForestClassifier
+                from sklearn.ensemble import RandomForestClassifier
+                
+                # Cria um modelo simples para teste
+                model = RandomForestClassifier(n_estimators=10, random_state=42)
+                
+                # Remove colunas que não serão usadas para predição
+                X_temp = paged_df.drop(columns=[col for col in ['transaction_id', 'tx_datetime', 'tx_amount'] 
+                                             if col in paged_df.columns])
+                                             
+                # Cria dados fictícios para treinar o modelo
+                # Vamos presumir uma taxa de fraude de 10%
+                import numpy as np
+                num_samples = len(X_temp)
+                y_temp = np.zeros(num_samples)
+                fraud_indices = np.random.choice(num_samples, size=int(num_samples * 0.1), replace=False)
+                y_temp[fraud_indices] = 1
+                
+                # Treina o modelo simples
+                print(f"Treinando modelo simples com {num_samples} amostras...")
+                model.fit(X_temp, y_temp)
+                print("Modelo de teste treinado com sucesso!")
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Erro ao carregar ou criar modelo: {str(e)}"
+            )
         
         # 6. Prepara os dados para predição
         print(f"Preparando dados para predição de {len(paged_df)} transações...")
@@ -660,10 +695,16 @@ def predict_from_merged(
             # Commit das transações
             conn.commit()
 
+        model_type = "original" if MODEL_PATH.exists() else "teste (gerado automaticamente)"
+        
         return {
-            "message": f"Predição realizada com sucesso. {len(results)} logs {'substituídos' if clear_previous_logs else 'adicionados'} no banco.", 
+            "message": f"Predição realizada com sucesso usando modelo {model_type}. {len(results)} logs {'substituídos' if clear_previous_logs else 'adicionados'} no banco.", 
             "results": results, 
             "count": len(results),
+            "model_info": {
+                "type": model_type,
+                "path": str(MODEL_PATH) if MODEL_PATH.exists() else "modelo temporário em memória"
+            },
             "filters_applied": {
                 "start_date": start_date,
                 "end_date": end_date,
@@ -683,6 +724,10 @@ def predict_from_merged(
             "database_log": f"Logs {'substituídos' if clear_previous_logs else 'adicionados'} com sucesso no NeonDB"
         }
     except Exception as e:
+        import traceback
+        print(f"ERRO: {str(e)}")
+        print(traceback.format_exc())
+        
         raise HTTPException(
             status_code=500, 
             detail=f"Erro durante a predição: {str(e)}"
