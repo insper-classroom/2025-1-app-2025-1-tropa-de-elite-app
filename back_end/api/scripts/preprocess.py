@@ -19,7 +19,7 @@ Uso:
 import argparse
 import logging
 from pathlib import Path
-
+from scipy.stats import vonmises
 import numpy as np
 import pandas as pd
 
@@ -77,6 +77,7 @@ def generate_basic_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def card_basic_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    df = df.sort_values(['card_id','tx_datetime'])
     df['card_age_days']     = (df['tx_datetime'] - pd.to_datetime(df['card_first_transaction'])).dt.days
     df['tx_time_diff_prev'] = df.groupby('card_id')['tx_datetime'].diff().dt.total_seconds().fillna(0)
     df['tx_time_diff_prev'] = np.log10(df['tx_time_diff_prev'] + 1)
@@ -84,6 +85,7 @@ def card_basic_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def terminal_basic_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    df = df.sort_values(['terminal_id','tx_datetime'])
     df['terminal_age_days']      = (df['tx_datetime'] - pd.to_datetime(df['terminal_operation_start'])).dt.days
     # Sobrescreve tx_time_diff_prev com base em terminal
     df['tx_time_diff_prev'] = df.groupby('terminal_id')['tx_datetime'].diff().dt.total_seconds().fillna(0)
@@ -230,17 +232,24 @@ def add_geographical_features(df: pd.DataFrame) -> pd.DataFrame:
     df.drop(columns=['prev_lat','prev_lon','distancia_entre_transacoes'], inplace=True)
     return df
 
-def soft_redo(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df['merchant'] = df['terminal_soft_descriptor'].str.split().str[0]
-    return df
+# def soft_redo(df: pd.DataFrame) -> pd.DataFrame:
+#     df = df.copy()
+#     df['merchant'] = df['terminal_soft_descriptor'].str.split().str[0]
+#     return df
+
+# def flag_top_merchants(df: pd.DataFrame) -> pd.DataFrame:
+#     df = df.copy()
+#     top_merchants = ['Prime', 'Physio', 'Ifood', 'Rappi', 'Fusion']
+#     df['is_top_merchant'] = df['merchant'].isin(top_merchants).astype(int)
+#     return df
+
 
 def exclude_features(df: pd.DataFrame) -> pd.DataFrame:
     cols = [
-        'tx_datetime','tx_fraud_report_date','latitude','longitude',
+        'tx_date','tx_fraud_report_date','latitude','longitude',
         'card_id','terminal_id','transaction_id','tx_time',
         'card_first_transaction','terminal_operation_start','terminal_soft_descriptor',
-        'is_transactional_fraud', 'merchant'
+        'is_transactional_fraud', 'merchant','card_bin'
     ]
     return df.drop(columns=cols, errors='ignore')
 
@@ -265,7 +274,8 @@ def process_pipeline(payers_path: Path, sellers_path: Path, transactions_path: P
     logger.info("Contando fraudes por card_bin...")
     df = add_cardbin_fraud_window(df)
     logger.info("Ajustando soft descriptor...")
-    df = soft_redo(df)
+    # df = soft_redo(df)
+    # df = flag_top_merchants(df)
     logger.info("Excluindo colunas finais...")
     df = exclude_features(df)
     return df

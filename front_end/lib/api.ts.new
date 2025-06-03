@@ -1,0 +1,101 @@
+import { BatchPredictionResult, ModelInfo, PredictionResult, ProcessedData, SearchResult } from "@/types";
+
+// Base API URL - configurable through environment
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+
+// Helper for handling response errors with better error messages
+const handleResponse = async (response: Response) => {
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ 
+      message: `Error: ${response.status} ${response.statusText}` 
+    }));
+    throw new Error(error.message || `HTTP error! status: ${response.status}`);
+  }
+  return response.json();
+};
+
+// Função auxiliar para lidar com erros de rede
+const handleNetworkError = (error: any, operation: string) => {
+  console.error(`Erro em ${operation}:`, error);
+  if (error.message === "Failed to fetch") {
+    throw new Error(`Erro de conexão com o servidor. Verifique se o backend está sendo executado em http://localhost:8000.`);
+  } else if (error.cause?.code === 'ECONNREFUSED') {
+    throw new Error(`Conexão recusada ao tentar acessar o servidor. Verifique se o backend está sendo executado em http://localhost:8000.`);
+  } else if (error.cause?.code === 'ETIMEDOUT') {
+    throw new Error(`Tempo esgotado ao tentar acessar o servidor. Verifique sua conexão de rede e se o backend está em execução.`);
+  }
+  throw error;
+};
+
+// Enhanced API client with proper error handling and typing
+export const api = {
+  // Upload files
+  uploadFiles: async (payersFile: File, sellersFile: File, transactionsFile: File): Promise<{ message: string; paths: string[] }> => {
+    try {
+      const formData = new FormData();
+      formData.append('payers_file', payersFile);
+      formData.append('seller_terminals_file', sellersFile);
+      formData.append('transactional_train_file', transactionsFile);
+      
+      const response = await fetch(`${API_URL}/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      return handleResponse(response);
+    } catch (error) {
+      return handleNetworkError(error, 'uploadFiles');
+    }
+  },
+
+  // Process the uploaded data
+  processData: async (): Promise<ProcessedData> => {
+    try {
+      const response = await fetch(`${API_URL}/process`, {
+        method: 'POST',
+      });
+      return handleResponse(response);
+    } catch (error) {
+      return handleNetworkError(error, 'processData');
+    }
+  },
+
+  // Get list of models
+  getModels: async (): Promise<ModelInfo[]> => {
+    try {
+      const response = await fetch(`${API_URL}/modelos`);
+      return handleResponse(response);
+    } catch (error) {
+      return handleNetworkError(error, 'getModels');
+    }
+  },
+
+  // Search rows in the processed dataset
+  searchRows: async (query: string): Promise<SearchResult> => {
+    try {
+      const response = await fetch(`${API_URL}/search_rows?q=${encodeURIComponent(query)}`);
+      return handleResponse(response);
+    } catch (error) {
+      return handleNetworkError(error, 'searchRows');
+    }
+  },
+
+  // Predict a single row
+  predictRow: async (nome: string, variante: string, versao: string, rowIndex: number): Promise<PredictionResult> => {
+    try {
+      const response = await fetch(`${API_URL}/predict_row?nome=${encodeURIComponent(nome)}&variante=${encodeURIComponent(variante)}&versao=${encodeURIComponent(versao)}&row_index=${rowIndex}`);
+      return handleResponse(response);
+    } catch (error) {
+      return handleNetworkError(error, 'predictRow');
+    }
+  },
+
+  // Predict all rows in the dataset
+  predictAll: async (nome: string, variante: string, versao: string): Promise<BatchPredictionResult> => {
+    try {
+      const response = await fetch(`${API_URL}/predict_all?nome=${encodeURIComponent(nome)}&variante=${encodeURIComponent(variante)}&versao=${encodeURIComponent(versao)}`);
+      return handleResponse(response);
+    } catch (error) {
+      return handleNetworkError(error, 'predictAll');
+    }
+  }
+};

@@ -1,9 +1,0 @@
-models:
-  dummy:
-    sem_desacordo:
-      - "v1.0.0"
-    com_desacordo: []
-  SGD:
-    sem_desacordo:
-      - "v1.0.0"
-    com_desacordo: []
