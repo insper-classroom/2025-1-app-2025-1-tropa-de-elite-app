@@ -1,35 +1,20 @@
+// filepath: c:\Users\mateu\OneDrive\Documentos\Quarto_sem\Sprint\2025-1-app-2025-1-tropa-de-elite-app\front_end\lib\api.ts
 import { BatchPredictionResult, ModelInfo, PredictionResult, ProcessedData, SearchResult } from "@/types";
 
 // Base API URL - configurable through environment
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 
 // Helper for handling response errors with better error messages
 const handleResponse = async (response: Response) => {
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ 
-      message: `Error: ${response.status} ${response.statusText}` 
-    }));
+    const error = await response.json().catch(() => ({ message: 'Network response was not ok' }));
     throw new Error(error.message || `HTTP error! status: ${response.status}`);
   }
   return response.json();
 };
 
-// Função auxiliar para lidar com erros de rede
-const handleNetworkError = (error: any, operation: string) => {
-  console.error(`Erro em ${operation}:`, error);
-  if (error.message === "Failed to fetch") {
-    throw new Error(`Erro de conexão com o servidor. Verifique se o backend está sendo executado em http://localhost:8000.`);
-  } else if (error.cause?.code === 'ECONNREFUSED') {
-    throw new Error(`Conexão recusada ao tentar acessar o servidor. Verifique se o backend está sendo executado em http://localhost:8000.`);
-  } else if (error.cause?.code === 'ETIMEDOUT') {
-    throw new Error(`Tempo esgotado ao tentar acessar o servidor. Verifique sua conexão de rede e se o backend está em execução.`);
-  }
-  throw error;
-};
-
 // Enhanced API client with proper error handling and typing
-export const api = {
-  // Upload files
+export const api = {  // Upload files
   uploadFiles: async (payersFile: File, sellersFile: File, transactionsFile: File): Promise<{ message: string; paths: string[] }> => {
     try {
       const formData = new FormData();
@@ -43,7 +28,8 @@ export const api = {
       });
       return handleResponse(response);
     } catch (error) {
-      return handleNetworkError(error, 'uploadFiles');
+      console.error('Error uploading files:', error);
+      throw error;
     }
   },
 
@@ -55,7 +41,8 @@ export const api = {
       });
       return handleResponse(response);
     } catch (error) {
-      return handleNetworkError(error, 'processData');
+      console.error('Error processing data:', error);
+      throw error;
     }
   },
 
@@ -65,7 +52,8 @@ export const api = {
       const response = await fetch(`${API_URL}/modelos`);
       return handleResponse(response);
     } catch (error) {
-      return handleNetworkError(error, 'getModels');
+      console.error('Error fetching models:', error);
+      throw error;
     }
   },
 
@@ -75,59 +63,29 @@ export const api = {
       const response = await fetch(`${API_URL}/search_rows?q=${encodeURIComponent(query)}`);
       return handleResponse(response);
     } catch (error) {
-      return handleNetworkError(error, 'searchRows');
+      console.error('Error searching rows:', error);
+      throw error;
     }
   },
-
   // Predict a single row
   predictRow: async (nome: string, variante: string, versao: string, rowIndex: number): Promise<PredictionResult> => {
     try {
       const response = await fetch(`${API_URL}/predict_row?nome=${encodeURIComponent(nome)}&variante=${encodeURIComponent(variante)}&versao=${encodeURIComponent(versao)}&row_index=${rowIndex}`);
       return handleResponse(response);
     } catch (error) {
-      return handleNetworkError(error, 'predictRow');
+      console.error('Error predicting row:', error);
+      throw error;
     }
   },
+
   // Predict all rows in the dataset
   predictAll: async (nome: string, variante: string, versao: string): Promise<BatchPredictionResult> => {
     try {
       const response = await fetch(`${API_URL}/predict_all?nome=${encodeURIComponent(nome)}&variante=${encodeURIComponent(variante)}&versao=${encodeURIComponent(versao)}`);
       return handleResponse(response);
     } catch (error) {
-      return handleNetworkError(error, 'predictAll');
-    }
-  },
-  
-  // Submit batch prediction job (stub for compatibility)
-  submitBatchJob: async (file: File): Promise<{ jobId: string }> => {
-    try {
-      return { jobId: 'mock-job-id' }; // Mock implementation
-    } catch (error) {
-      return handleNetworkError(error, 'submitBatchJob');
-    }
-  },
-  
-  // Get batch job status (stub for compatibility)
-  getBatchJobStatus: async (jobId: string): Promise<any> => {
-    try {
-      return {
-        jobId,
-        progress: 100,
-        status: 'completed',
-        timestamp: new Date().toISOString(),
-        userId: 'user-1'
-      }; // Mock implementation
-    } catch (error) {
-      return handleNetworkError(error, 'getBatchJobStatus');
-    }
-  },
-  
-  // Get logs (stub for compatibility)
-  getLogs: async (filters?: any): Promise<any[]> => {
-    try {
-      return []; // Empty array for mock implementation
-    } catch (error) {
-      return handleNetworkError(error, 'getLogs');
+      console.error('Error predicting all rows:', error);
+      throw error;
     }
   }
 };

@@ -88,6 +88,7 @@ export const api = {
       return handleNetworkError(error, 'predictRow');
     }
   },
+
   // Predict all rows in the dataset
   predictAll: async (nome: string, variante: string, versao: string): Promise<BatchPredictionResult> => {
     try {
@@ -95,39 +96,6 @@ export const api = {
       return handleResponse(response);
     } catch (error) {
       return handleNetworkError(error, 'predictAll');
-    }
-  },
-  
-  // Submit batch prediction job (stub for compatibility)
-  submitBatchJob: async (file: File): Promise<{ jobId: string }> => {
-    try {
-      return { jobId: 'mock-job-id' }; // Mock implementation
-    } catch (error) {
-      return handleNetworkError(error, 'submitBatchJob');
-    }
-  },
-  
-  // Get batch job status (stub for compatibility)
-  getBatchJobStatus: async (jobId: string): Promise<any> => {
-    try {
-      return {
-        jobId,
-        progress: 100,
-        status: 'completed',
-        timestamp: new Date().toISOString(),
-        userId: 'user-1'
-      }; // Mock implementation
-    } catch (error) {
-      return handleNetworkError(error, 'getBatchJobStatus');
-    }
-  },
-  
-  // Get logs (stub for compatibility)
-  getLogs: async (filters?: any): Promise<any[]> => {
-    try {
-      return []; // Empty array for mock implementation
-    } catch (error) {
-      return handleNetworkError(error, 'getLogs');
     }
   }
 };
