@@ -253,7 +253,6 @@ def exclude_features(df: pd.DataFrame) -> pd.DataFrame:
     ]
     return df.drop(columns=cols, errors='ignore')
 
-
 def process_pipeline(payers_path: Path, sellers_path: Path, transactions_path: Path) -> pd.DataFrame:
     df = run_merge(payers_path, sellers_path, transactions_path)
     logger.info("Gerando basic features...")

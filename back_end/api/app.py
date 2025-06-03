@@ -19,6 +19,7 @@ from sqlalchemy import delete
 sys.path.append(str(Path(__file__).parent / "scripts"))
 from scripts.preprocess import process_pipeline
 
+
 app = FastAPI(title="Fraud Detection API")
 
 # Configuração de diretórios e arquivos
