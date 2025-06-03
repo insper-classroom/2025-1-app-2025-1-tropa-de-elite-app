@@ -1,4 +1,3 @@
-
 venv/
 env/
 ENV/
@@ -11,8 +10,6 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
-
-
 dist/
 build/
 *.egg-info/
@@ -56,3 +53,53 @@ logs/
 
 
 !back_end/api/models/SGD_model.joblib
+
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+
+venv/
+ENV/
+.env
+
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+
+.next/
+out/
+
+# Logs
+logs/
+*.log
+
+
+*.csv
+*.feather
+*.parquet
+*.pkl
+*.sqlite
+.vscode/
+
+# JetBrains
+.idea/
+*.iml
+
+# Docker
+.dockerignore
+
+
