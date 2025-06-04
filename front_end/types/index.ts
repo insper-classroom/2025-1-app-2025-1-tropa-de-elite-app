@@ -39,6 +39,12 @@ export interface LogEntry {
   attributes?: Record<string, any>;
 }
 
+export interface TransactionResult {
+  transaction_id: string;
+  approved: boolean;
+  probability_of_fraud: number;
+}
+
 export interface ModelInfo {
   version: string;
   dvcVersion?: string;

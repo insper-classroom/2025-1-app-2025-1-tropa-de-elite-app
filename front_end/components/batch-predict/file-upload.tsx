@@ -70,15 +70,14 @@ export function FileUpload({
             error && "border-destructive/50 bg-destructive/5"
           )}
         >
-          <input {...getInputProps()} />
-          <div className="flex flex-col items-center justify-center gap-2">
+          <input {...getInputProps()} />          <div className="flex flex-col items-center justify-center gap-2">
             <UploadIcon className="h-10 w-10 text-muted-foreground" />
-            <h3 className="font-medium text-lg">Drag & drop a CSV file here</h3>
+            <h3 className="font-medium text-lg">Arraste ou solte o arquivo de transações aqui</h3>
             <p className="text-sm text-muted-foreground">
-              or click to browse for a file
+              ou clique para procurar um arquivo
             </p>
             <p className="text-xs text-muted-foreground mt-2">
-              Only CSV files are supported
+              Apenas arquivos CSV são suportados
             </p>
           </div>
         </div>

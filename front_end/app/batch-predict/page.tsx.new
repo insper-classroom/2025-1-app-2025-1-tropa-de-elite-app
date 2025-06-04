@@ -15,60 +15,47 @@ export default function BatchPredictPage() {
   const [job, setJob] = useState<BatchJob | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
 
-  // Effect for monitoring job status
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
     
     const checkJobStatus = async () => {
       if (!job || job.status === 'completed' || job.status === 'failed') {
-        if (interval) {
-          clearInterval(interval);
-          setIsProcessing(false);
-        }
+        if (interval) clearInterval(interval);
         return;
       }
       
       try {
-        // Usar nossa API para verificar o status do job
+        // Use our API to check job status
         const updatedJob = await api.getBatchJobStatus(job.jobId);
         
-        // Atualizar progresso se houver mudanças
-        if (updatedJob.progress !== progress) {
+        // Only update state if there are actual changes
+        if (updatedJob.progress !== job.progress) {
           setProgress(updatedJob.progress);
         }
         
-        // Atualizar job se status mudou
         if (updatedJob.status !== job.status) {
           setJob(updatedJob);
           
           if (updatedJob.status === 'completed') {
             toast.success('Processamento em lote concluído!');
-            setIsProcessing(false);
-            setError(null);
             if (interval) clearInterval(interval);
           } else if (updatedJob.status === 'failed') {
             setError('Falha no processamento em lote. Por favor, tente novamente.');
-            setIsProcessing(false);
-            toast.error('Processamento falhou');
             if (interval) clearInterval(interval);
           }
         }
       } catch (error) {
-        console.error('Erro ao verificar status do processamento:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-        setError(`Falha ao verificar status do processamento: ${errorMessage}`);
-        setIsProcessing(false);
-        toast.error('Erro ao verificar status');
+        console.error('Error checking job status:', error);
+        setError('Falha ao verificar status do processamento');
         if (interval) clearInterval(interval);
       }
     };
     
     if (job && job.status === 'processing') {
-      // Verificação inicial imediata
+      // Initial check
       checkJobStatus();
-      // Configurar polling para verificações contínuas
+      // Set up polling interval
       interval = setInterval(checkJobStatus, 2000);
     }
     
@@ -76,46 +63,31 @@ export default function BatchPredictPage() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [job, progress]); // Dependências controladas
+  }, [job?.jobId, job?.status]); // Only depend on specific job properties
 
   const handleFileSelect = (selectedFile: File) => {
     setFile(selectedFile);
     setError(null);
-    // Chamar upload automaticamente após seleção do arquivo
-    handleUpload(selectedFile);
   };
 
-  const handleUpload = async (selectedFile?: File) => {
-    const fileToUpload = selectedFile || file;
-    if (!fileToUpload || isProcessing) return;
+  const handleUpload = async () => {
+    if (!file) return;
     
     try {
-      setIsProcessing(true);
       setProgress(0);
-      setError(null);
-      
-      // Mostrar toast de início de processamento
-      toast.info('Iniciando processamento em lote...');
-      
-      // Submeter o job usando nossa API de integração
-      const { jobId } = await api.submitBatchJob(fileToUpload);
-      
-      // Atualizar o estado com informações do job
+      // Use our API to submit the job
+      const { jobId } = await api.submitBatchJob(file);
       setJob({
         jobId,
         progress: 0,
         status: 'processing',
         timestamp: new Date().toISOString(),
-        userId: 'current-user', // Virá da autenticação na aplicação real
+        userId: 'current-user', // Would come from auth in real app
       });
-      
       toast.info('Processamento em lote iniciado');
     } catch (error) {
-      console.error('Erro ao submeter processamento em lote:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-      setError(`Falha ao enviar processamento em lote: ${errorMessage}`);
-      setIsProcessing(false);
-      toast.error('Erro ao iniciar processamento');
+      console.error('Error submitting batch job:', error);
+      setError('Falha ao enviar processamento em lote. Por favor, tente novamente.');
     }
   };
 
@@ -124,8 +96,14 @@ export default function BatchPredictPage() {
     setFile(null);
     setProgress(0);
     setError(null);
-    setIsProcessing(false);
   };
+
+  // Separate useEffect for handling file upload
+  useEffect(() => {
+    if (file && !job) {
+      handleUpload();
+    }  
+  }, [file]); // Only depend on file changes
 
   return (
     <div className="container py-6">
@@ -147,7 +125,7 @@ export default function BatchPredictPage() {
         ) : (
           <FileUpload 
             onFileSelect={handleFileSelect}
-            isUploading={isProcessing}
+            isUploading={!!job && job.status === 'processing'}
             progress={progress}
             onCancel={handleCancel}
           />

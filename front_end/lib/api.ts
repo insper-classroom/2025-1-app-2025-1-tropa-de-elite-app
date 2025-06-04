@@ -52,19 +52,25 @@ export const api = {
       throw error;
     }
   },
-
   // Submit batch prediction job with progress tracking
   submitBatchJob: async (file: File): Promise<{ jobId: string }> => {
     try {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch(`${API_URL}/predict/batch`, {
+      // Usar o endpoint do nosso backend
+      const response = await fetch(`${API_URL}/predict_only_transactions`, {
         method: 'POST',
         body: formData,
       });
       
-      return handleResponse(response);
+      const data = await handleResponse(response);
+      
+      // Adaptar o formato da resposta para o esperado pelo frontend
+      return { 
+        jobId: `job-${Date.now()}`, // Criar um ID temporário para o job
+        // O backend real deveria retornar um jobId apropriado
+      };
     } catch (error) {
       console.error('Error submitting batch job:', error);
       throw error;
@@ -74,14 +80,23 @@ export const api = {
   // Get batch job status with enhanced progress tracking
   getBatchJobStatus: async (jobId: string): Promise<BatchJob> => {
     try {
-      const response = await fetch(`${API_URL}/predict/batch/${jobId}/status`);
-      return handleResponse(response);
+      // Simular progresso do processamento
+      // Em uma implementação real, consultaria o status do job no backend
+      const randomProgress = Math.min(100, Math.floor(Math.random() * 25) + 75);
+      
+      return {
+        jobId,
+        status: randomProgress >= 100 ? 'completed' : 'processing',
+        progress: randomProgress,
+        timestamp: new Date().toISOString(),
+        userId: 'current-user',
+        downloadUrl: randomProgress >= 100 ? `/api/jobs/${jobId}/download` : undefined
+      };
     } catch (error) {
       console.error('Error checking job status:', error);
       throw error;
     }
   },
-
   // Get logs with filters and proper error handling
   getLogs: async (filters?: LogsFilter): Promise<LogEntry[]> => {
     try {
@@ -95,6 +110,13 @@ export const api = {
       }
       
       const url = `${API_URL}/logs${params.toString() ? `?${params.toString()}` : ''}`;
+      
+      // For development, simulate filtering by dates
+      if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+        // Return mock data with date filtering
+        return generateMockLogs(filters);
+      }
+      
       const response = await fetch(url);
       return handleResponse(response);
     } catch (error) {
@@ -103,6 +125,63 @@ export const api = {
     }
   },
 };
+
+// Helper function to generate mock logs with date filtering
+function generateMockLogs(filters?: LogsFilter): LogEntry[] {
+  // Create a date range from the last 30 days
+  const now = new Date();
+  const mockLogs: LogEntry[] = [];
+  
+  // Generate 100 random logs
+  for (let i = 0; i < 100; i++) {
+    const randomDaysAgo = Math.floor(Math.random() * 30);
+    const logDate = new Date(now);
+    logDate.setDate(logDate.getDate() - randomDaysAgo);
+    
+    const log: LogEntry = {
+      id: `log-${i}`,
+      timestamp: logDate.toISOString(),
+      transactionId: `TX-${100000 + i}`,
+      userId: 'system', // Simplificado
+      score: Math.random() > 0.8 ? 0.9 : 0.1, // Simplificado
+      decision: Math.random() > 0.8 ? 'FRAUD' : 'NOT_FRAUD',
+      version: 'v1.0', // Simplificado
+      attributes: {} // Simplificado
+    };
+    
+    mockLogs.push(log);
+  }
+  
+  // Apply filters if provided
+  if (filters) {
+    return mockLogs.filter(log => {
+      const logDate = new Date(log.timestamp);
+      
+      // Filter by date range
+      if (filters.startDate && logDate < filters.startDate) {
+        return false;
+      }
+      
+      if (filters.endDate && logDate > filters.endDate) {
+        return false;
+      }
+      
+      // Filter by model version
+      if (filters.modelVersion && log.version !== filters.modelVersion) {
+        return false;
+      }
+      
+      // Filter by fraud status
+      if (filters.fraudOnly && log.decision !== 'FRAUD') {
+        return false;
+      }
+      
+      return true;
+    });
+  }
+  
+  return mockLogs;
+}
 
 // Development mock data
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {

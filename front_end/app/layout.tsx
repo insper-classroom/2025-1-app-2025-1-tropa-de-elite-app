@@ -2,13 +2,13 @@ import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { Header } from '@/components/layout/header';
-import { Providers } from './providers';
+import { Toaster } from '@/components/ui/toaster';
 
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'FraudGuard - Fraud Analysis Dashboard',
-  description: 'Advanced fraud detection and analysis platform',
+  title: 'Mercado Libre - Análise de Fraude',
+  description: 'Sistema de detecção de fraude para transações do Mercado Libre',
 };
 
 export default function RootLayout({
@@ -17,14 +17,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="pt-BR">
       <body className={inter.className}>
-        <Providers>
-          <div className="min-h-screen flex flex-col">
-            <Header />
-            <main className="flex-1 flex flex-col items-center w-full max-w-7xl mx-auto px-4">{children}</main>
-          </div>
-        </Providers>
+        <div className="min-h-screen bg-[#fff159]">
+          <Header />
+          <main className="container mx-auto px-4 py-6">
+            {children}
+          </main>
+        </div>
+        <Toaster />
       </body>
     </html>
   );

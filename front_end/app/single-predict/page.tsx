@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { TransactionSearch } from "@/components/single-predict/transaction-search";
 import { TransactionDetails } from "@/components/single-predict/transaction-details";
 import { PredictionResultCard } from "@/components/single-predict/prediction-result";
-import { api } from "@/lib/api";
+import { api } from "@/lib/api-integration-ready";
 import { PredictionResult, Transaction } from "@/types";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";

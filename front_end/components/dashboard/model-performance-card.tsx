@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ArrowUpIcon, ArrowDownIcon, Activity } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { api } from "@/lib/api";
+import { api } from "@/lib/api-integration-ready";
 
 export function ModelPerformanceCard() {
   const [modelInfo, setModelInfo] = useState({ version: "loading..." });
