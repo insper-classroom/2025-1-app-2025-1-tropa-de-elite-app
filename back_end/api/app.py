@@ -1,734 +1,245 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException,Query
+# api/app.py
+
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
-import shutil
+from typing import List
 from pathlib import Path
-import pandas as pd
+import shutil
 import uuid
-import os
-import sys
 import joblib
-from datetime import datetime
-import sqlalchemy
+import boto3
+import pandas as pd
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, Float, DateTime, Table, MetaData
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from typing import Optional
-from sqlalchemy import delete
+from datetime import datetime
+from fastapi import FastAPI
+from pathlib import Path
+import os
+from dotenv import load_dotenv
 
-# Importa a função de pipeline do preprocess.py
-sys.path.append(str(Path(__file__).parent / "scripts"))
-from scripts.preprocess import process_pipeline
+# Carrega o .env (procura automaticamente na raiz do projeto)
+load_dotenv()
 
-app = FastAPI(title="Fraud Detection API")
+app = FastAPI(title="Fraud Prediction API")
 
-# Configuração de diretórios e arquivos
-# Configuração de diretórios e arquivos
-UPLOAD_DIR = Path("/tmp/uploads")
-FEATURES_PATH = Path("/tmp/features.parquet")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# Agora você pode acessar:
+S3_BUCKET    = os.getenv("S3_BUCKET")
+S3_KEY_DATA  = os.getenv("S3_KEY_DATA")
+MODEL_PATH   = Path(os.getenv("MODEL_PATH"))
+DATABASE_URL = os.getenv("DATABASE_URL")
+# -----------------------------------------------------------------------------
+# 1) CONFIGURAÇÃO GERAL
+# -----------------------------------------------------------------------------
 
-# Usar caminho absoluto para o modelo
-MODEL_PATH = Path('../model/dummy_model.joblib')
-# ou
-# MODEL_PATH = Path(r"c:\Users\mateu\OneDrive\Documentos\Sprint-4\2025-1-app-2025-1-tropa-de-elite-app\back_end\api\model\sem_desacordo_v1.0.0.joblib")
+app = FastAPI(title="Fraud Prediction (apenas transaction_id)")
 
-# Configuração da conexão com o banco de dados
+# --- 1.1) variáveis S3 e Paths locais ---
+S3_BUCKET       = "seu-bucket-aqui"  
+S3_KEY_DATA     = "data_only_frauds-v2/data_only_frauds-v2.parquet"
+TMP_DIR         = Path("/tmp")
+TMP_DIR.mkdir(parents=True, exist_ok=True)
+LOCAL_DATA_PATH = TMP_DIR / "data_only_frauds-v2.parquet"
+
+# --- 1.2) caminho do seu modelo treinado (joblib) ---
+MODEL_PATH = Path("/path/para/seu/dummy_model.joblib")
+# ajuste conforme a localização real, ex:
+# MODEL_PATH = Path("../model/dummy_model.joblib")
+
+# --- 1.3) Configuração do banco de logs (opcional) ---
 DATABASE_URL = "postgresql://neondb_owner:npg_3Ci2vZGmBofM@ep-morning-mouse-acjafuzl-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require"
 engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-# Definição da tabela para logs de predição
 metadata = MetaData()
 prediction_logs = Table(
-    "prediction_logs", 
-    metadata,
+    "prediction_logs", metadata,
     Column("id", Integer, primary_key=True, index=True),
     Column("transaction_id", String, index=True),
     Column("timestamp", DateTime),
     Column("is_fraud", Boolean),
-    Column("tx_amount", Float),
     Column("fraud_probability", Float),
 )
-
-# Cria tabela se não existir
 metadata.create_all(bind=engine)
 
-# Função para obter uma sessão do banco de dados
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# --- 1.4) cliente S3 (boto3) ---
+s3_client = boto3.client("s3")
 
-
-
-
-        
-@app.post("/upload")
-async def upload_files(
-    payers: UploadFile = File(...),
-    sellers: UploadFile = File(...),
-    transactions: UploadFile = File(...)
-):
-    try:
-        # Salva arquivos temporariamente
-        payers_path = UPLOAD_DIR / f"payers_{uuid.uuid4()}.feather"
-        sellers_path = UPLOAD_DIR / f"sellers_{uuid.uuid4()}.feather"
-        transactions_path = UPLOAD_DIR / f"transactions_{uuid.uuid4()}.feather"
-        
-        for file, path in zip([payers, sellers, transactions], [payers_path, sellers_path, transactions_path]):
-            with open(path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-
-        # Chama o pipeline de merge/features
-        df_features = process_pipeline(payers_path, sellers_path, transactions_path)
-        df_features.to_parquet(FEATURES_PATH, index=False)
-
-        # Limpa arquivos temporários
-        payers_path.unlink()
-        sellers_path.unlink()
-        transactions_path.unlink()
-
-        return JSONResponse({"message": "Features geradas com sucesso!", "features_path": str(FEATURES_PATH)})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/predict/batch")
-def predict_batch():
-    try:
-        print(1)
-        # Carrega features
-        if not FEATURES_PATH.exists():
-            raise HTTPException(status_code=400, detail="Arquivo de features não encontrado. Faça upload primeiro.")
-        df = pd.read_parquet(FEATURES_PATH)
-        print(2)
-        # Carrega modelo
-        model = joblib.load(MODEL_PATH)
-        
-        # Seleciona as features para o modelo, removendo colunas que não são usadas
-        X = df.drop(columns=[col for col in ['transaction_id', 'tx_datetime', 'tx_amount'] if col in df.columns])
-        print(3)
-        # Faz a predição
-        y_pred = model.predict(X)
-        y_prob = model.predict_proba(X)[:, 1] if hasattr(model, 'predict_proba') else [None]*len(X)
-
-        # Monta resultado e salva no banco de dados
-        results = []
-        print(4)
-        # Conecta ao banco de dados
-        with engine.connect() as conn:
-            for idx, row in df.iterrows():
-                timestamp = datetime.now()
-                transaction_id = str(row.get("transaction_id", f"tx_{idx}"))
-                is_fraud = bool(y_pred[idx])
-                tx_amount = float(row.get("tx_amount", 0))
-                probability = float(y_prob[idx]) if y_prob[idx] is not None else 0.0
-                
-                # Salva log no PostgreSQL
-                conn.execute(
-                    prediction_logs.insert().values(
-                        transaction_id=transaction_id,
-                        timestamp=timestamp,
-                        is_fraud=is_fraud,
-                        tx_amount=tx_amount,
-                        fraud_probability=probability
-                    )
-                )
-                print(5)
-                
-                # Adiciona ao resultado da API
-                results.append({
-                    "transaction_id": transaction_id,
-                    "timestamp": timestamp.isoformat(),
-                    "is_fraud": is_fraud,
-                    "value": tx_amount,
-                    "probability": probability
-                })
-            
-            # Commit das transações
-            conn.commit()
-
-        return {"results": results, "count": len(results), "database_log": "Logs salvos com sucesso no NeonDB"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao processar predições: {str(e)}")
-    
-
-
-
-
-
-
-@app.post("/process-and-predict")
-async def process_and_predict(
-    payers: UploadFile = File(...),
-    sellers: UploadFile = File(...),
-    transactions: UploadFile = File(...),
-    # Filtros
-    start_date: Optional[str] = Query(None, description="Data inicial (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="Data final (YYYY-MM-DD)"),
-    transaction_id: Optional[str] = Query(None, description="ID específico da transação"),
-    bin_number: Optional[str] = Query(None, description="BIN (primeiros 6 dígitos do cartão)"),
-    min_amount: Optional[float] = Query(None, description="Valor mínimo da transação"),
-    max_amount: Optional[float] = Query(None, description="Valor máximo da transação"),
-    # Paginação
-    page: int = Query(1, ge=1, description="Página a processar (1000 transações por página)"),
-    page_size: int = Query(1000, ge=10, le=10000, description="Número de transações por página")
-):
-    try:
-        # 1. Salva arquivos temporariamente
-        payers_path = UPLOAD_DIR / f"payers_{uuid.uuid4()}.feather"
-        sellers_path = UPLOAD_DIR / f"sellers_{uuid.uuid4()}.feather"
-        transactions_path = UPLOAD_DIR / f"transactions_{uuid.uuid4()}.feather"
-        
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        
-        for file, path in zip([payers, sellers, transactions], [payers_path, sellers_path, transactions_path]):
-            with open(path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-
-        # 2. Processa os dados e gera features
-        print("Processando dados...")
-        df_features = process_pipeline(payers_path, sellers_path, transactions_path)
-        
-        # 3. Aplica filtros antes de paginar
-        print("Aplicando filtros...")
-        filtered_df = df_features.copy()
-        
-        # Filtros de data
-        if start_date and 'tx_datetime' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['tx_datetime'] >= pd.to_datetime(start_date)]
-            
-        if end_date and 'tx_datetime' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['tx_datetime'] <= pd.to_datetime(end_date)]
-        
-        # Filtro por ID da transação
-        if transaction_id and 'transaction_id' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['transaction_id'].str.contains(transaction_id, na=False)]
-        
-        # Filtro por BIN
-        if bin_number and 'transaction_id' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['transaction_id'].str.startswith(bin_number, na=False)]
-        
-        # Filtros de valor
-        if min_amount is not None and 'tx_amount' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['tx_amount'] >= min_amount]
-            
-        if max_amount is not None and 'tx_amount' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['tx_amount'] <= max_amount]
-        
-        # 4. Aplicar paginação no conjunto filtrado
-        total_records = len(filtered_df)
-        total_pages = (total_records + page_size - 1) // page_size
-        
-        # Verifica se a página solicitada existe
-        if page > total_pages and total_pages > 0:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "message": f"Página {page} não existe. Total de páginas disponíveis: {total_pages}",
-                    "total_records": total_records,
-                    "total_pages": total_pages
-                }
-            )
-        
-        # Aplica a paginação (seleciona apenas a página solicitada)
-        start_idx = (page - 1) * page_size
-        end_idx = min(start_idx + page_size, total_records)
-        
-        # Verifica se há dados após a filtragem e paginação
-        if total_records == 0:
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "message": "Nenhuma transação encontrada com os filtros aplicados",
-                    "count": 0,
-                    "filters_applied": {
-                        "start_date": start_date,
-                        "end_date": end_date,
-                        "transaction_id": transaction_id,
-                        "bin_number": bin_number,
-                        "min_amount": min_amount,
-                        "max_amount": max_amount
-                    },
-                    "pagination": {
-                        "page": page,
-                        "page_size": page_size,
-                        "total_records": 0,
-                        "total_pages": 0
-                    }
-                }
-            )
-        
-        # Seleciona apenas a página atual para processamento
-        print(f"Aplicando paginação: página {page} de {total_pages}")
-        paged_df = filtered_df.iloc[start_idx:end_idx].copy()
-        
-        # 5. Carrega o modelo
-        print("Carregando modelo...")
-        model = joblib.load(MODEL_PATH)
-        
-        # 6. Prepara os dados para predição
-        print(f"Preparando dados para predição de {len(paged_df)} transações...")
-        transaction_ids = paged_df['transaction_id'].tolist() if 'transaction_id' in paged_df.columns else [f"tx_{i}" for i in range(len(paged_df))]
-        tx_amounts = paged_df['tx_amount'].tolist() if 'tx_amount' in paged_df.columns else [0.0] * len(paged_df)
-        
-        print("Removendo colunas desnecessárias...")
-        # Remove colunas que não são usadas no modelo
-        X = paged_df.drop(columns=[col for col in ['transaction_id', 'tx_datetime', 'tx_amount'] if col in paged_df.columns])
-        
-        # 7. Faz a predição
-        print("Fazendo predições...")
-        y_pred = model.predict(X)
-        y_prob = model.predict_proba(X)[:, 1] if hasattr(model, 'predict_proba') else [None]*len(X)
-        
-        # 8. Monta resultado e salva no banco de dados
-        results = []
-        
-        # Conecta ao banco de dados
-        with engine.connect() as conn:
-            print("Conectando ao banco de dados...")
-            for i in range(len(y_pred)):
-                timestamp = datetime.now()
-                transaction_id = str(transaction_ids[i])
-                is_fraud = bool(y_pred[i])
-                tx_amount = float(tx_amounts[i])
-                probability = float(y_prob[i]) if y_prob[i] is not None else 0.0
-                
-                # Salva log no PostgreSQL
-                conn.execute(
-                    prediction_logs.insert().values(
-                        transaction_id=transaction_id,
-                        timestamp=timestamp,
-                        is_fraud=is_fraud,
-                        tx_amount=tx_amount,
-                        fraud_probability=probability
-                    )
-                )
-                
-                # Adiciona ao resultado da API
-                results.append({
-                    "transaction_id": transaction_id,
-                    "timestamp": timestamp.isoformat(),
-                    "is_fraud": is_fraud,
-                    "value": tx_amount,
-                    "probability": probability
-                })
-            
-            # Commit das transações
-            conn.commit()
-        
-        # 9. Limpa arquivos temporários
-        payers_path.unlink(missing_ok=True)
-        sellers_path.unlink(missing_ok=True)
-        transactions_path.unlink(missing_ok=True)
-
-        return {
-            "message": "Processamento e predição completos", 
-            "results": results, 
-            "count": len(results),
-            "filters_applied": {
-                "start_date": start_date,
-                "end_date": end_date,
-                "transaction_id": transaction_id,
-                "bin_number": bin_number,
-                "min_amount": min_amount,
-                "max_amount": max_amount
-            },
-            "pagination": {
-                "page": page,
-                "page_size": page_size,
-                "total_records": total_records,
-                "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_previous": page > 1
-            },
-            "database_log": "Logs salvos com sucesso no NeonDB"
-        }
-    except Exception as e:
-        # Tenta limpar arquivos em caso de erro
-        try:
-            payers_path.unlink(missing_ok=True)
-            sellers_path.unlink(missing_ok=True)
-            transactions_path.unlink(missing_ok=True)
-
-        except:
-            pass
-        
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Erro durante o processamento: {str(e)}"
-        )
-    
-
-
-    ## FAZENDO O PROCESSAMENTO E PREDIÇÃO SEPARADOS
-
-
-    
-
-
-@app.post("/upload-and-merge")
-async def upload_and_merge(
-    payers: UploadFile = File(...),
-    sellers: UploadFile = File(...),
-    transactions: UploadFile = File(...)
-):
+def download_parquet_from_s3(bucket: str, key: str, local_path: Path):
     """
-    Upload e merge dos arquivos de payers, sellers e transactions.
-    Gera um dataset unificado que será usado nas predições.
-    Esta etapa precisa ser executada apenas uma vez antes das predições.
+    Faz download do arquivo Parquet do S3 para o sistema de arquivos local (/tmp).
+    Se falhar, lança um RuntimeError.
     """
     try:
-        # Debug dos arquivos recebidos
-        print(f"Arquivo payers: {payers.filename}, tamanho: {payers.size}")
-        print(f"Arquivo sellers: {sellers.filename}, tamanho: {sellers.size}")
-        print(f"Arquivo transactions: {transactions.filename}, tamanho: {transactions.size}")
-        
-        # 1. Salva arquivos temporariamente (com nomes fixos para debug)
-        payers_path = UPLOAD_DIR / "payers_debug.feather"
-        sellers_path = UPLOAD_DIR / "sellers_debug.feather" 
-        transactions_path = UPLOAD_DIR / "transactions_debug.feather"
-        
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        
-        # Salvando um arquivo por vez para isolar problemas
-        print(f"Salvando arquivo payers em {payers_path}")
-        with open(payers_path, "wb") as buffer:
-            content = await payers.read()
-            buffer.write(content)
-            print(f"  - Bytes escritos: {len(content)}")
-        await payers.seek(0)  # Reset o cursor
-        
-        print(f"Salvando arquivo sellers em {sellers_path}")
-        with open(sellers_path, "wb") as buffer:
-            content = await sellers.read()
-            buffer.write(content)
-            print(f"  - Bytes escritos: {len(content)}")
-        await sellers.seek(0)  # Reset o cursor
-            
-        print(f"Salvando arquivo transactions em {transactions_path}")
-        with open(transactions_path, "wb") as buffer:
-            content = await transactions.read()
-            buffer.write(content)
-            print(f"  - Bytes escritos: {len(content)}")
-        await transactions.seek(0)  # Reset o cursor
-            
-        # Verificar se os arquivos foram salvos corretamente
-        if not all(path.exists() and path.stat().st_size > 0 for path in [payers_path, sellers_path, transactions_path]):
-            raise ValueError("Um ou mais arquivos não foram salvos corretamente ou estão vazios")
-            
-        # Verificar se os arquivos são feather válidos
-        try:
-            for path, file_type in zip([payers_path, sellers_path, transactions_path], ["payers", "sellers", "transactions"]):
-                try:
-                    df_test = pd.read_feather(path)
-                    print(f"Arquivo {file_type} carregado com sucesso: {len(df_test)} linhas, {len(df_test.columns)} colunas")
-                except Exception as e:
-                    raise ValueError(f"Erro ao carregar o arquivo {file_type}: {str(e)}")
-        except Exception as feather_error:
-            raise ValueError(f"Erro ao validar arquivos feather: {str(feather_error)}")
-            
-        # 2. Processa os dados e gera features
-        print("Processando dados e gerando dataset unificado...")
-        try:
-            df_features = process_pipeline(payers_path, sellers_path, transactions_path)
-            print(f"Dataset gerado com sucesso: {len(df_features)} linhas, {len(df_features.columns)} colunas")
-        except Exception as e:
-            raise ValueError(f"Erro no process_pipeline: {str(e)}")
-            
-        # 3. Salva o dataset processado para uso futuro
-        FEATURES_PATH.parent.mkdir(parents=True, exist_ok=True)
-        print(f"Salvando dataset em {FEATURES_PATH}")
-        df_features.to_parquet(FEATURES_PATH, index=False)
-        print(f"Dataset salvo com sucesso: {FEATURES_PATH.stat().st_size} bytes")
-        
-        # 4. Limpa arquivos temporários
-        payers_path.unlink(missing_ok=True)
-        sellers_path.unlink(missing_ok=True)
-        transactions_path.unlink(missing_ok=True)
-        
-        # 5. Retorna estatísticas do dataset
-        stats = {
-            "total_transactions": len(df_features),
-            "features_count": len(df_features.columns),
-            "date_range": {
-                "min": df_features['tx_datetime'].min().isoformat() if 'tx_datetime' in df_features else None,
-                "max": df_features['tx_datetime'].max().isoformat() if 'tx_datetime' in df_features else None
-            },
-            "amount_stats": {
-                "min": float(df_features['tx_amount'].min()) if 'tx_amount' in df_features else None,
-                "max": float(df_features['tx_amount'].max()) if 'tx_amount' in df_features else None,
-                "mean": float(df_features['tx_amount'].mean()) if 'tx_amount' in df_features else None
-            },
-            "features_path": str(FEATURES_PATH)
-        }
-
-        return {
-            "message": "Dataset unificado gerado com sucesso!",
-            "dataset_stats": stats
-        }
+        s3_client.download_file(bucket, key, str(local_path))
     except Exception as e:
-        # Tenta limpar arquivos em caso de erro
-        try:
-            if 'payers_path' in locals():
-                payers_path.unlink(missing_ok=True)
-            if 'sellers_path' in locals():
-                sellers_path.unlink(missing_ok=True)
-            if 'transactions_path' in locals():
-                transactions_path.unlink(missing_ok=True)
-        except:
-            pass
-        
-        import traceback
-        error_detail = {
-            "message": str(e),
-            "traceback": traceback.format_exc()
-        }
-        
-        print(f"ERRO: {str(e)}")
-        print(traceback.format_exc())
-        
-        raise HTTPException(
-            status_code=500, 
-            detail=error_detail
-        )
-    
-@app.post("/predict-from-merged")
-def predict_from_merged(
-    # Filtros
-    start_date: Optional[str] = Query(None, description="Data inicial (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="Data final (YYYY-MM-DD)"),
-    transaction_id: Optional[str] = Query(None, description="ID específico da transação"),
-    bin_number: Optional[str] = Query(None, description="BIN (primeiros 6 dígitos do cartão)"),
-    min_amount: Optional[float] = Query(None, description="Valor mínimo da transação"),
-    max_amount: Optional[float] = Query(None, description="Valor máximo da transação"),
-    # Paginação
-    page: int = Query(1, ge=1, description="Página a processar"),
-    page_size: int = Query(1000, ge=10, le=10000, description="Transações por página"),
-    # Opção para limpar logs
-    clear_previous_logs: bool = Query(True, description="Limpar logs anteriores antes de inserir novos")
+        raise RuntimeError(f"Não foi possível baixar '{key}' do S3: {e}")
+
+# -----------------------------------------------------------------------------
+# 2) STARTUP: carregar modelo + dataset inteiro em memória
+# -----------------------------------------------------------------------------
+
+@app.on_event("startup")
+def load_model_and_data():
+    # 2.1) carregar modelo em memória
+    if not MODEL_PATH.exists():
+        raise RuntimeError(f"Modelo não encontrado em {MODEL_PATH}")
+    app.state.model = joblib.load(MODEL_PATH)
+
+    # 2.2) baixar do S3 (se ainda não existir localmente)
+    #      ou sempre sobrescrever (à sua escolha). Aqui sempre sobrescrevemos:
+    if LOCAL_DATA_PATH.exists():
+        LOCAL_DATA_PATH.unlink()
+    try:
+        download_parquet_from_s3(S3_BUCKET, S3_KEY_DATA, LOCAL_DATA_PATH)
+    except RuntimeError as e:
+        raise RuntimeError(f"Falha no startup ao baixar dataset: {e}")
+
+    # 2.3) ler Parquet inteiro em memória
+    try:
+        df_all = pd.read_parquet(LOCAL_DATA_PATH)
+    except Exception as e:
+        raise RuntimeError(f"Falha ao ler Parquet '{LOCAL_DATA_PATH}': {e}")
+
+    # 2.4) verificar coluna 'transaction_id' existe
+    if "transaction_id" not in df_all.columns:
+        raise RuntimeError("O Parquet data_only_frauds-v2 não contém 'transaction_id'. Ele é obrigatório.")
+    app.state.df_all = df_all
+
+    print("Startup concluído: modelo e data_only_frauds-v2 carregados em memória.")
+
+
+# -----------------------------------------------------------------------------
+# 3) ENDPOINT: recebe apenas lista de transaction_id e prediz
+# -----------------------------------------------------------------------------
+
+@app.post("/predict_only_transactions")
+async def predict_only_transactions(
+    file: UploadFile = File(
+        ...,
+        description="Um arquivo CSV (ou Parquet simples) contendo apenas uma coluna 'transaction_id'."
+    )
 ):
     """
-    Faz predições usando o dataset já mergeado.
-    Suporta filtragem e paginação para processar subconjuntos dos dados.
-    Pode ser chamada múltiplas vezes com diferentes parâmetros.
+    1) Recebe um CSV (ou Parquet) com coluna 'transaction_id'
+    2) Lê essa lista de IDs
+    3) Filtra o DataFrame pré-carregado (app.state.df_all) para só esses IDs
+    4) Extrai colunas de features (todas, exceto transaction_id e is_fraud se existir)
+    5) Executa model.predict(...) e model.predict_proba(...)
+    6) Retorna JSON com [{ transaction_id, approved, probability_of_fraud }, ...]
     """
+
+    # --- 3.1) Salvar temporário em /tmp e ler como DataFrame ---
+    ext = Path(file.filename).suffix.lower()
+    temp_in = TMP_DIR / f"ids_{uuid.uuid4()}{ext}"
     try:
-        # 1. Verifica se o dataset mergeado existe
-        if not FEATURES_PATH.exists():
+        with open(temp_in, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        if ext in {".csv"}:
+            df_ids = pd.read_csv(temp_in, dtype={"transaction_id": str})
+        elif ext in {".parquet", ".feather"}:
+            df_ids = pd.read_parquet(temp_in)
+        else:
+            temp_in.unlink(missing_ok=True)
             raise HTTPException(
-                status_code=400, 
-                detail="Dataset unificado não encontrado. Execute primeiro o endpoint /upload-and-merge."
-            )
-            
-        # 2. Carrega o dataset
-        print("Carregando dataset unificado...")
-        df_features = pd.read_parquet(FEATURES_PATH)
-        
-        # 3. Aplica filtros
-        print("Aplicando filtros...")
-        filtered_df = df_features.copy()
-        
-        # Filtros de data
-        if start_date and 'tx_datetime' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['tx_datetime'] >= pd.to_datetime(start_date)]
-            
-        if end_date and 'tx_datetime' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['tx_datetime'] <= pd.to_datetime(end_date)]
-        
-        # Filtro por ID da transação
-        if transaction_id and 'transaction_id' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['transaction_id'].str.contains(transaction_id, na=False)]
-        
-        # Filtro por BIN
-        if bin_number and 'bin_number' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['bin_number'].str.startswith(bin_number, na=False)]
-        
-        # Filtros de valor
-        if min_amount is not None and 'tx_amount' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['tx_amount'] >= min_amount]
-            
-        if max_amount is not None and 'tx_amount' in filtered_df.columns:
-            filtered_df = filtered_df[filtered_df['tx_amount'] <= max_amount]
-        
-        # 4. Aplicar paginação no conjunto filtrado
-        total_records = len(filtered_df)
-        total_pages = (total_records + page_size - 1) // page_size
-        
-        # Verifica se a página solicitada existe
-        if page > total_pages and total_pages > 0:
-            return JSONResponse(
                 status_code=400,
-                content={
-                    "message": f"Página {page} não existe. Total de páginas disponíveis: {total_pages}",
-                    "total_records": total_records,
-                    "total_pages": total_pages
-                }
+                detail="Formato inválido. Use CSV, Parquet ou Feather contendo apenas 'transaction_id'."
             )
-        
-        # Aplica a paginação (seleciona apenas a página solicitada)
-        start_idx = (page - 1) * page_size
-        end_idx = min(start_idx + page_size, total_records)
-        
-        # Verifica se há dados após a filtragem e paginação
-        if total_records == 0:
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "message": "Nenhuma transação encontrada com os filtros aplicados",
-                    "count": 0,
-                    "filters_applied": {
-                        "start_date": start_date,
-                        "end_date": end_date,
-                        "transaction_id": transaction_id,
-                        "bin_number": bin_number,
-                        "min_amount": min_amount,
-                        "max_amount": max_amount
-                    },
-                    "pagination": {
-                        "page": page,
-                        "page_size": page_size,
-                        "total_records": 0,
-                        "total_pages": 0
-                    }
-                }
-            )
-        
-        # Seleciona apenas a página atual para processamento
-        print(f"Aplicando paginação: página {page} de {total_pages} ({start_idx+1}-{end_idx} de {total_records} registros)")
-        paged_df = filtered_df.iloc[start_idx:end_idx].copy()
-        
-        # 5. Carrega o modelo ou cria um modelo simples se não encontrar
-        print("Carregando modelo...")
-        try:
-            if MODEL_PATH.exists():
-                model = joblib.load(MODEL_PATH)
-                print("Modelo carregado com sucesso!")
-            else:
-                print(f"AVISO: Modelo não encontrado em {MODEL_PATH}. Criando modelo simples para teste...")
-                # Importa RandomForestClassifier
-                from sklearn.ensemble import RandomForestClassifier
-                
-                # Cria um modelo simples para teste
-                model = RandomForestClassifier(n_estimators=10, random_state=42)
-                
-                # Remove colunas que não serão usadas para predição
-                X_temp = paged_df.drop(columns=[col for col in ['transaction_id', 'tx_datetime', 'tx_amount'] 
-                                             if col in paged_df.columns])
-                                             
-                # Cria dados fictícios para treinar o modelo
-                # Vamos presumir uma taxa de fraude de 10%
-                import numpy as np
-                num_samples = len(X_temp)
-                y_temp = np.zeros(num_samples)
-                fraud_indices = np.random.choice(num_samples, size=int(num_samples * 0.1), replace=False)
-                y_temp[fraud_indices] = 1
-                
-                # Treina o modelo simples
-                print(f"Treinando modelo simples com {num_samples} amostras...")
-                model.fit(X_temp, y_temp)
-                print("Modelo de teste treinado com sucesso!")
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Erro ao carregar ou criar modelo: {str(e)}"
-            )
-        
-        # 6. Prepara os dados para predição
-        print(f"Preparando dados para predição de {len(paged_df)} transações...")
-        transaction_ids = paged_df['transaction_id'].tolist() if 'transaction_id' in paged_df.columns else [f"tx_{i}" for i in range(len(paged_df))]
-        tx_amounts = paged_df['tx_amount'].tolist() if 'tx_amount' in paged_df.columns else [0.0] * len(paged_df)
-        
-        # Remove colunas que não são usadas no modelo
-        X = paged_df.drop(columns=[col for col in ['transaction_id', 'tx_datetime', 'tx_amount'] if col in paged_df.columns])
-        
-        # 7. Faz a predição
-        print("Fazendo predições...")
-        y_pred = model.predict(X)
-        y_prob = model.predict_proba(X)[:, 1] if hasattr(model, 'predict_proba') else [None]*len(X)
-        
-        # 8. Monta resultado e salva no banco de dados
-        results = []
-        
-        # Conecta ao banco de dados
-        with engine.connect() as conn:
-            print("Conectando ao banco de dados...")
-            
-            # Limpa logs anteriores se solicitado
-            if clear_previous_logs:
-                print("Limpando logs anteriores...")
-                delete_query = delete(prediction_logs)
-                conn.execute(delete_query)
-                print("Logs anteriores removidos com sucesso.")
-            
-            # Inserir novos logs
-            print(f"Inserindo {len(y_pred)} novos logs...")
-            for i in range(len(y_pred)):
-                timestamp = datetime.now()
-                transaction_id = str(transaction_ids[i])
-                is_fraud = bool(y_pred[i])
-                tx_amount = float(tx_amounts[i])
-                probability = float(y_prob[i]) if y_prob[i] is not None else 0.0
-                
-                # Salva log no PostgreSQL
-                conn.execute(
-                    prediction_logs.insert().values(
-                        transaction_id=transaction_id,
-                        timestamp=timestamp,
-                        is_fraud=is_fraud,
-                        tx_amount=tx_amount,
-                        fraud_probability=probability
-                    )
-                )
-                
-                # Adiciona ao resultado da API
-                results.append({
-                    "transaction_id": transaction_id,
-                    "timestamp": timestamp.isoformat(),
-                    "is_fraud": is_fraud,
-                    "value": tx_amount,
-                    "probability": probability
-                })
-            
-            # Commit das transações
-            conn.commit()
-
-        model_type = "original" if MODEL_PATH.exists() else "teste (gerado automaticamente)"
-        
-        return {
-            "message": f"Predição realizada com sucesso usando modelo {model_type}. {len(results)} logs {'substituídos' if clear_previous_logs else 'adicionados'} no banco.", 
-            "results": results, 
-            "count": len(results),
-            "model_info": {
-                "type": model_type,
-                "path": str(MODEL_PATH) if MODEL_PATH.exists() else "modelo temporário em memória"
-            },
-            "filters_applied": {
-                "start_date": start_date,
-                "end_date": end_date,
-                "transaction_id": transaction_id,
-                "bin_number": bin_number,
-                "min_amount": min_amount,
-                "max_amount": max_amount
-            },
-            "pagination": {
-                "page": page,
-                "page_size": page_size,
-                "total_records": total_records,
-                "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_previous": page > 1
-            },
-            "database_log": f"Logs {'substituídos' if clear_previous_logs else 'adicionados'} com sucesso no NeonDB"
-        }
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        import traceback
-        print(f"ERRO: {str(e)}")
-        print(traceback.format_exc())
-        
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Erro durante a predição: {str(e)}"
+        if temp_in.exists():
+            temp_in.unlink()
+        raise HTTPException(status_code=500, detail=f"Não foi possível ler a lista de IDs: {e}")
+
+    # apagar o temporário, pois não precisamos mais
+    temp_in.unlink(missing_ok=True)
+
+    # --- 3.2) Validar coluna 'transaction_id' existe e é texto ---
+    if "transaction_id" not in df_ids.columns:
+        raise HTTPException(status_code=400, detail="O arquivo de entrada deve ter coluna 'transaction_id'.")
+
+    df_ids["transaction_id"] = df_ids["transaction_id"].astype(str)
+
+    # --- 3.3) Filtrar o DataFrame pré-carregado para só os IDs solicitados ---
+    df_all = app.state.df_all
+    # Para aumentar a performance, podemos fazer um inner join por “transaction_id”:
+    merged = df_all.merge(
+        df_ids[["transaction_id"]].drop_duplicates(),
+        on="transaction_id",
+        how="inner"
+    )
+    if merged.empty:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "message": "Nenhum transaction_id encontrado em data_only_frauds-v2",
+                "count": 0,
+                "results": []
+            }
         )
+
+    # --- 3.4) Preparar vetor de features para predição ---
+    # Assumimos que em 'merged' estão:
+    #   - coluna 'transaction_id'
+    #   - possivelmente 'is_fraud' (não usaremos)
+    #   - e TODAS as colunas de features que o seu modelo espera (por ex: tx_amount_log, tx_hour_of_day, card_age_days, …)
+    #
+    # Vamos extrair exatamente as colunas de features:
+    cols_all = list(merged.columns)
+    # remover coluna 'transaction_id' e 'is_fraud' se existir
+    bad = {"transaction_id", "is_fraud"}
+    feature_cols = [c for c in cols_all if c not in bad]
+    if not feature_cols:
+        raise HTTPException(
+            status_code=500,
+            detail="Não houve nenhuma coluna de features em data_only_frauds-v2 (além de 'transaction_id' ou 'is_fraud')."
+        )
+
+    X = merged[feature_cols].copy()
+
+    # --- 3.5) Executar predição ---
+    model = app.state.model
+    try:
+        y_pred = model.predict(X)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Falha em model.predict: {e}")
+
+    # predict_proba pode não existir, então protegemos:
+    if hasattr(model, "predict_proba"):
+        try:
+            y_prob = model.predict_proba(X)[:, 1].tolist()
+        except Exception:
+            # se der erro, preenche com zeros
+            y_prob = [0.0] * len(X)
+    else:
+        y_prob = [0.0] * len(X)
+
+    # --- 3.6) Montar resposta e gravar log no banco ---
+    results = []
+    with engine.connect() as conn:
+        for i, row in merged.reset_index(drop=True).iterrows():
+            tx_id = row["transaction_id"]
+            is_fraud = int(y_pred[i])  # 1 → fraude, 0 → não fraude
+            approved = True if is_fraud == 0 else False
+            prob = float(y_prob[i])
+
+            # Inserir no prediction_logs (NeonDB)
+            conn.execute(
+                prediction_logs.insert().values(
+                    transaction_id=tx_id,
+                    timestamp=datetime.utcnow(),
+                    is_fraud=bool(is_fraud),
+                    fraud_probability=prob
+                )
+            )
+
+            results.append({
+                "transaction_id": tx_id,
+                "approved": approved,
+                "probability_of_fraud": prob
+            })
+        conn.commit()
+
+    return {
+        "message": f"Predição concluída: {len(results)} registros",
+        "count": len(results),
+        "results": results
+    }
