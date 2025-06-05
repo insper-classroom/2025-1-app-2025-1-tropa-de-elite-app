@@ -247,7 +247,7 @@ def add_geographical_features(df: pd.DataFrame) -> pd.DataFrame:
 def exclude_features(df: pd.DataFrame) -> pd.DataFrame:
     cols = [
         'tx_date','tx_fraud_report_date','latitude','longitude',
-        'card_id','terminal_id','transaction_id','tx_time',
+        'card_id','terminal_id','tx_time',
         'card_first_transaction','terminal_operation_start','terminal_soft_descriptor',
         'is_transactional_fraud', 'merchant','card_bin'
     ]

@@ -1,0 +1,87 @@
+# params.yaml
+
+# --- 1. Configurações de Fonte de Dados e Pré-processamento ---
+data_source:
+  # Caminhos para os arquivos brutos iniciais (formato feather)
+  payers_file: data/payers.feather
+  sellers_file: data/sellers.feather
+  transactions_file: data/transactions.feather
+
+  # Saída do script de merge (intermediário)
+  merged_data_interim_path: data/merged_data.parquet
+
+  # Saída final do pré-processamento completo (com features)
+  # Este arquivo será a entrada para a stage 'split_data'
+  fully_processed_data_path: data/data_only_frauds.parquet # Renomeado para clareza
+
+  # Colunas usadas no split e para separar y e amounts
+  # Estas devem existir no 'fully_processed_data_path'
+  date_col_for_split: tx_datetime   # Assumindo que você cria 'tx_date' e usa para o split
+  amount_col: tx_amount           # tx_amount (log-transformado pelas features)
+  fraud_col: is_fraud
+
+  drop_cols_for_X:
+    - 'transaction_id'
+
+  # Colunas para o ColumnTransformer do SGD_basic_model (e outros)
+  # Devem existir em X_train/X_val após o split
+  # Estas são os NOMES DAS FEATURES após toda a engenharia.
+  categorical_cols:
+  - regiao
+  numerical_cols:
+  - tx_hour_of_day
+  - tx_dayofweek
+  - card_age_days
+  - tx_time_diff_prev
+  - terminal_age_days
+  - terminal_card_reuse_ratio_prior
+  - shared_terminal_with_frauds_prior
+  - avg_speed_between_txs
+  - card_fraud_count_last_1d
+  - card_nonfraud_count_last_1d
+  - card_fraud_count_last_7d
+  - card_nonfraud_count_last_7d
+  - cardbin_fraud_count_last_30d
+  - amount_card_norm_pdf
+  - amount_terminal_norm_pdf
+  
+train:
+  model_type: dummy
+
+  dummy_model: {}
+
+  lgbm_model:
+    threshold: 0.8029382768326732
+
+  xgboost_model:
+    threshold: 0.804907749976376
+
+  random_forest_model:
+    threshold: 0.6154339012368015
+
+  sgd_logistic_model:
+    threshold: 0.987049056473948
+
+  svm_kernel_model:
+    threshold: 0.23316240371821423
+
+
+# --- 3. Configurações para Busca de Threshold ---
+threshold_finding:
+  commission_rate: 0.03
+
+# --- 4. Configurações para Avaliação (Cross-Validation) ---
+evaluation_cv:
+  n_splits: 5
+
+# --- 5. Configurações para Análise e Comparação de Resultados ---
+analysis:
+  models_to_compare:
+  - dummy
+  - sgd_logistic
+  - lgbm
+  - xgboost
+  - random_forest
+  - svm_kernel
+
+  roc_plot_output: reports/plots/roc_comparison.png
