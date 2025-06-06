@@ -11,48 +11,65 @@ import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, BackgroundTasks
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from pathlib import Path
 
-# --- Imports do Banco de Dados ---
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, Float, DateTime
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
 
-# ─── Carrega .env ─────────────────────────────────────────────────────────────
+# Importa o pipeline completo que agora PRESERVA `transaction_id` no DataFrame de saída
+from data_processing import process_pipeline  
+
+
+# ==============================================================================
+#  CONFIGURAÇÃO INICIAL
+# ==============================================================================
 BASE_DIR = Path(__file__).parent.resolve()
 load_dotenv(dotenv_path=BASE_DIR / ".env", override=True)
 
-# ─── Vars de ambiente e Configuração ──────────────────────────────────────────
-S3_BUCKET = os.getenv("S3_BUCKET")
-S3_KEY_DATA = os.getenv("S3_KEY_DATA")
-S3_KEY_MODEL = os.getenv("S3_KEY_MODEL")
-S3_KEY_PAYERS = os.getenv("S3_KEY_PAYERS")
-S3_KEY_SELLERS = os.getenv("S3_KEY_SELLERS")
-DATABASE_URL = os.getenv("DATABASE_URL")
+S3_BUCKET            = os.getenv("S3_BUCKET")
+S3_KEY_MODEL         = os.getenv("S3_KEY_MODEL")
+S3_KEY_PAYERS        = os.getenv("S3_KEY_PAYERS")
+S3_KEY_SELLERS       = os.getenv("S3_KEY_SELLERS")
+S3_KEY_TRANSACTIONAL = os.getenv("S3_KEY_TRANSACTIONAL")  # histórico “5 M”
+DATABASE_URL         = os.getenv("DATABASE_URL")
 
-for v in ("S3_BUCKET", "S3_KEY_DATA", "S3_KEY_MODEL", "S3_KEY_PAYERS", "S3_KEY_SELLERS", "DATABASE_URL"):
+for v in (
+    "S3_BUCKET",
+    "S3_KEY_MODEL",
+    "S3_KEY_PAYERS",
+    "S3_KEY_SELLERS",
+    "S3_KEY_TRANSACTIONAL",
+    "DATABASE_URL",
+):
     if not os.getenv(v):
         raise RuntimeError(f"Variável de ambiente '{v}' não está definida.")
 
+# Diretório temporário local
 TMP_DIR = Path(os.getenv("TMP_DIR", "/tmp/fraud_api"))
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-FRAUD_THRESHOLD = 0.804907749976376
+# Limiar para aprovar transação
+FRAUD_THRESHOLD = 0.54
 
-# ─── Configuração do Banco de Dados (SQLAlchemy) ─────────────────────────────
+# Configuração do SQLAlchemy
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+
+# ==============================================================================
+#  MODELO DE DADOS NO BANCO (PredictionLog)
+# ==============================================================================
 class PredictionLog(Base):
     __tablename__ = "prediction_logs"
     id = Column(Integer, primary_key=True, index=True)
     request_timestamp = Column(DateTime, default=datetime.utcnow)
-    transaction_id = Column(String, index=True)
-    approved = Column(Boolean)
-    probability_of_fraud = Column(Float)
+    transaction_id = Column(String, index=True, nullable=False)
+    model_score = Column(Float, nullable=False)
+    tx_approved = Column(Boolean, nullable=False)
+
 
 def get_db():
     db = SessionLocal()
@@ -61,159 +78,136 @@ def get_db():
     finally:
         db.close()
 
-# ─── Pydantic Models e Estado Global ──────────────────────────────────────────
+
+# ==============================================================================
+#  SCHEMAS Pydantic PARA TRANSFERÊNCIA DE DADOS
+# ==============================================================================
 class PredictionResult(BaseModel):
-    transaction_id: str
-    approved: bool
-    probability_of_fraud: float
+    transaction_id: str = Field(..., description="ID da transação processada")
+    model_score: float = Field(..., description="Probabilidade de fraude (pontuação do modelo)")
+    tx_approved: bool = Field(..., description="Se a transação foi aprovada pelo modelo")
+
 
 class BatchResponse(BaseModel):
     message: str
     transactions_processed: int
 
+
+# ==============================================================================
+#  ESTADO GLOBAL DA APLICAÇÃO
+# ==============================================================================
 class AppState:
     model = None
-    df_payers = None
-    df_sellers = None
-    df_card_last_tx = None
+    payers_path: Path = None
+    sellers_path: Path = None
+    transactional_path: Path = None  # histórico “5 M preprocessadas”
+
 
 state = AppState()
 
-# ─── Colunas do Modelo (definidas uma vez) ──────────────────────────────────
-FEATURE_COLUMNS = [
-    "regiao", "tx_amount", "tx_hour_of_day", "tx_dayofweek", "card_age_days", 
-    "tx_time_diff_prev", "amount_card_norm_pdf", "terminal_age_days", 
-    "terminal_card_reuse_ratio_prior", "shared_terminal_with_frauds_prior", 
-    "card_fraud_count_last_1d", "card_nonfraud_count_last_1d", 
-    "card_fraud_count_last_7d", "card_nonfraud_count_last_7d", 
-    "amount_terminal_norm_pdf", "avg_speed_between_txs", "cardbin_fraud_count_last_30d"
-]
 
-# ─── Funções Auxiliares ────────────────────────────────────────────────────────
+# ==============================================================================
+#  UTILITÁRIOS PARA DOWNLOAD E LIFECYCLE
+# ==============================================================================
 def download_from_s3(bucket: str, key: str, local_path: Path):
     s3_client = boto3.client("s3")
     try:
         if not local_path.exists():
             local_path.parent.mkdir(parents=True, exist_ok=True)
+            print(f"[INFO] Baixando '{key}' do S3...")
             s3_client.download_file(bucket, key, str(local_path))
-            print(f"[INFO] Baixado '{key}' para '{local_path}'.")
         else:
             print(f"[INFO] Usando arquivo local cacheado: '{local_path}'.")
     except Exception as e:
         raise RuntimeError(f"Erro ao baixar '{key}' do bucket '{bucket}': {e}")
 
-def process_new_transactions(df_new: pd.DataFrame) -> pd.DataFrame:
-    if df_new.empty:
-        return pd.DataFrame(columns=FEATURE_COLUMNS)
-
-    df_proc = df_new.copy()
-    original_index = df_proc.index # Preserva a ordem original
-    
-    df_proc["tx_datetime"] = pd.to_datetime(df_proc["tx_datetime"])
-    df_proc.sort_values(by=["card_id", "tx_datetime"], inplace=True)
-    
-    intra_batch_diff = df_proc.groupby("card_id")["tx_datetime"].diff().dt.total_seconds()
-    df_proc = df_proc.merge(state.df_card_last_tx, on="card_id", how="left")
-    
-    history_diff = (df_proc["tx_datetime"] - df_proc["last_tx_datetime_history"]).dt.total_seconds()
-    final_diff_seconds = intra_batch_diff.fillna(history_diff)
-    df_proc["tx_time_diff_prev"] = np.log1p(final_diff_seconds.fillna(0))
-    
-    df_proc["tx_amount"] = np.log1p(df_proc["tx_amount"])
-    df_proc["tx_hour_of_day"] = df_proc["tx_datetime"].dt.hour
-    df_proc["tx_dayofweek"] = df_proc["tx_datetime"].dt.weekday
-
-    df_proc = df_proc.merge(state.df_payers, on="card_id", how="left")
-    df_proc = df_proc.merge(state.df_sellers, on="terminal_id", how="left")
-
-    df_proc["card_age_days"] = (df_proc["tx_datetime"] - df_proc["card_first_transaction"]).dt.days
-    df_proc["terminal_age_days"] = (df_proc["tx_datetime"] - df_proc["terminal_operation_start"]).dt.days
-    df_proc["card_age_days"] = df_proc["card_age_days"].fillna(0)
-    df_proc["terminal_age_days"] = df_proc["terminal_age_days"].fillna(0)
-
-    def get_region(lat):
-        if pd.isna(lat): return "UNKNOWN"
-        if lat > -10: return "Norte"
-        if lat > -20: return "Centro-Oeste"
-        return "Sudeste"
-    df_proc["regiao"] = df_proc["latitude"].apply(get_region)
-
-    placeholders = {
-        "shared_terminal_with_frauds_prior": 0.0, "card_fraud_count_last_1d": 0.0,
-        "card_nonfraud_count_last_1d": 0.0, "card_fraud_count_last_7d": 0.0,
-        "card_nonfraud_count_last_7d": 0.0, "cardbin_fraud_count_last_30d": 0.0,
-        "amount_card_norm_pdf": 0.5, "terminal_card_reuse_ratio_prior": 0.0,
-        "amount_terminal_norm_pdf": 0.5, "avg_speed_between_txs": 0.0,
-    }
-    for col, val in placeholders.items(): df_proc[col] = val
-
-    for col in FEATURE_COLUMNS:
-        if col not in df_proc.columns:
-            df_proc[col] = 0
-    df_proc.fillna(0, inplace=True)
-    
-    return df_proc.set_index("transaction_id").loc[df_new["transaction_id"]].reset_index()[FEATURE_COLUMNS]
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("[INFO] Verificando e criando tabela do banco de dados, se necessário...")
-    try:
-        Base.metadata.create_all(bind=engine)
-        print("[INFO] Tabela do banco de dados pronta.")
-    except Exception as e:
-        print(f"[ERROR] Falha ao conectar ou criar tabela no banco de dados: {e}")
+    """
+    1) Cria a tabela prediction_logs (se ainda não existir).
+    2) Baixa os Feathers de payers, sellers e transactional do S3.
+    3) “Patch” em sellers: garante colunas 'latitude' e 'longitude'.
+    4) Armazena em `state`:
+       - payers_path
+       - sellers_path (via arquivo “patched”)
+       - transactional_path
+    5) Carrega o modelo joblib em memória.
+    """
+    # 1) Garante que a tabela de logs exista
+    Base.metadata.create_all(bind=engine)
+    print("[INFO] Tabelas do banco criadas/confirmadas.")
 
-    local_history = TMP_DIR / Path(S3_KEY_DATA).name
-    local_model = TMP_DIR / Path(S3_KEY_MODEL).name
-    local_payers = TMP_DIR / Path(S3_KEY_PAYERS).name
-    local_sellers = TMP_DIR / Path(S3_KEY_SELLERS).name
+    # 2) Paths locais
+    local_model         = TMP_DIR / Path(S3_KEY_MODEL).name
+    local_payers        = TMP_DIR / Path(S3_KEY_PAYERS).name
+    local_sellers_orig  = TMP_DIR / Path(S3_KEY_SELLERS).name
+    local_transactional = TMP_DIR / Path(S3_KEY_TRANSACTIONAL).name
 
-    download_from_s3(S3_BUCKET, S3_KEY_DATA, local_history)
+    print("[INFO] Baixando artefatos do S3...")
     download_from_s3(S3_BUCKET, S3_KEY_MODEL, local_model)
     download_from_s3(S3_BUCKET, S3_KEY_PAYERS, local_payers)
-    download_from_s3(S3_BUCKET, S3_KEY_SELLERS, local_sellers)
+    download_from_s3(S3_BUCKET, S3_KEY_SELLERS, local_sellers_orig)
+    download_from_s3(S3_BUCKET, S3_KEY_TRANSACTIONAL, local_transactional)
 
-    print("[INFO] Carregando e pré-processando dados históricos...")
-    df_history = pd.read_parquet(local_history)
-    df_history['tx_datetime'] = pd.to_datetime(df_history['tx_datetime'])
-    last_tx = df_history.loc[df_history.groupby('card_id')['tx_datetime'].idxmax()]
-    state.df_card_last_tx = last_tx[['card_id', 'tx_datetime']].rename(columns={'tx_datetime': 'last_tx_datetime_history'})
-    print(f"[INFO] Pré-processamento do histórico concluído.")
-    del df_history
+    # 3) “Patch” em sellers: se não houver latitude/longitude, adiciona/reescreve
+    df_sellers = pd.read_feather(local_sellers_orig)
+    sobrescreveu = False
 
-    print("[INFO] Carregando modelo...")
+    if "latitude" not in df_sellers.columns:
+        df_sellers["latitude"] = np.nan
+        sobrescreveu = True
+    if "longitude" not in df_sellers.columns:
+        df_sellers["longitude"] = np.nan
+        sobrescreveu = True
+
+    if sobrescreveu:
+        patched_sellers = TMP_DIR / f"patched_{Path(S3_KEY_SELLERS).name}"
+        df_sellers.to_feather(patched_sellers)
+        state.sellers_path = patched_sellers
+        print(f"[INFO] Sellers “patchado” salvo em {patched_sellers.name}")
+    else:
+        state.sellers_path = local_sellers_orig
+        print("[INFO] Sellers já continha latitude/longitude; usando conforme baixado.")
+
+    # 4) Armazena payers e transactional no estado
+    state.payers_path        = local_payers
+    state.transactional_path = local_transactional
+
+    # 5) Carrega o modelo joblib em memória
+    print("[INFO] Carregando modelo treinado...")
     state.model = joblib.load(local_model)
     print("[INFO] Modelo carregado.")
-    
-    # --- CORREÇÃO: Este bloco estava faltando ---
-    print("[INFO] Carregando e processando dados de payers e sellers...")
-    temp_payers = pd.read_feather(local_payers)
-    temp_sellers = pd.read_feather(local_sellers)
-    
-    if "card_hash" in temp_payers.columns and "card_id" not in temp_payers.columns:
-        temp_payers["card_id"] = temp_payers["card_hash"]
-    if "card_id" not in temp_payers.columns:
-        raise RuntimeError("A coluna 'card_id' não foi encontrada ou criada no arquivo de payers.")
-    
-    temp_payers['card_first_transaction'] = pd.to_datetime(temp_payers['card_first_transaction'])
-    state.df_payers = temp_payers[["card_id", "card_bin", "card_first_transaction"]]
 
-    if "terminal_id" not in temp_sellers.columns:
-         raise RuntimeError("A coluna 'terminal_id' não foi encontrada no arquivo de sellers.")
-    temp_sellers['terminal_operation_start'] = pd.to_datetime(temp_sellers['terminal_operation_start'])
-    state.df_sellers = temp_sellers[["terminal_id", "latitude", "longitude", "terminal_operation_start", "terminal_soft_descriptor"]]
-    print("[INFO] Payers e Sellers carregados e processados.")
-    # --- FIM DA CORREÇÃO ---
-    
-    print("[INFO] API pronta para receber requisições.")
+    print("[INFO] Startup concluído. API pronta.")
     yield
-    print("[INFO] Recursos liberados.")
 
+
+# ==============================================================================
+#  INSTÂNCIA DO APP
+# ==============================================================================
+app = FastAPI(
+    title="Fraud Detection API",
+    version="1.2 (Preserva transaction_id e filtra só body)",
+    lifespan=lifespan
+)
+
+
+# ==============================================================================
+#  FUNÇÃO PARA SALVAR PREDIÇÕES NO BANCO (background)
+# ==============================================================================
 def log_predictions_to_db(predictions: List[PredictionResult], db: Session):
     print(f"[BACKGROUND] Iniciando salvamento de {len(predictions)} predições no banco de dados.")
     try:
-        db_logs = [PredictionLog(**p.model_dump()) for p in predictions]
+        db_logs = [
+            PredictionLog(
+                transaction_id=pred.transaction_id,
+                model_score=pred.model_score,
+                tx_approved=pred.tx_approved,
+                request_timestamp=datetime.utcnow(),
+            )
+            for pred in predictions
+        ]
         db.add_all(db_logs)
         db.commit()
         print(f"[BACKGROUND] {len(predictions)} predições salvas com sucesso.")
@@ -223,47 +217,125 @@ def log_predictions_to_db(predictions: List[PredictionResult], db: Session):
     finally:
         db.close()
 
-app = FastAPI(title="Fraud Detection API", version="1.6 (Final-Corrected)", lifespan=lifespan)
 
+# ==============================================================================
+#  ENDPOINT PARA PREDIÇÃO (Recebe Feather de transações, campo “file”)
+# ==============================================================================
 @app.post("/predict_batch_file", response_model=BatchResponse)
-async def predict_from_file(
+async def predict_from_form(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    file: UploadFile = File(...)
+    file: UploadFile = File(..., alias="file"),
 ):
-    if not file.filename.endswith(".feather"):
-        raise HTTPException(status_code=400, detail="Arquivo inválido. Envie um arquivo no formato .feather")
-
+    """
+    1. Lê o Feather de transações enviado no body (campo “file”).
+    2. Garante as colunas que o pipeline espera (is_transactional_fraud, is_fraud, etc.).
+    3. Salva esse DataFrame em tx2_path.
+    4. tx1_path é o Feather “transactional” baixado no startup.
+    5. Chama process_pipeline(payers_path, sellers_path, tx1_path, tx2_path).
+    6. Filtra o DataFrame de features para manter apenas transações cujo
+       `transaction_id` veio no body.
+    7. Executa predição no modelo apenas nessas linhas filtradas.
+    8. Salva logs e retorna BatchResponse.
+    """
+    # 1) Lê o Feather enviado
     try:
-        content = await file.read()
-        df_new = pd.read_feather(io.BytesIO(content))
+        conteudo = await file.read()
+        df_transactions = pd.read_feather(io.BytesIO(conteudo))
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Falha ao ler o arquivo .feather: {e}")
+        raise HTTPException(status_code=400, detail=f"Falha ao ler o arquivo Feather: {e}")
 
-    required = {"transaction_id", "tx_datetime", "tx_amount", "card_id", "terminal_id"}
-    if not required.issubset(df_new.columns):
-        missing = required - set(df_new.columns)
-        raise HTTPException(status_code=422, detail=f"Colunas obrigatórias ausentes no arquivo: {missing}")
-    
-    # Preservar a ordem original dos transaction_ids
-    original_tx_ids = df_new["transaction_id"]
-    df_features = process_new_transactions(df_new)
-    
-    probabilities = state.model.predict_proba(df_features)[:, 1]
-    is_fraud = (probabilities >= FRAUD_THRESHOLD)
+    # 2) Garante colunas exigidas pelo pipeline
+    if "is_transactional_fraud" not in df_transactions.columns:
+        df_transactions["is_transactional_fraud"] = 0
+    if "is_fraud" not in df_transactions.columns:
+        df_transactions["is_fraud"] = 0
 
+    if "tx_fraud_report_date" not in df_transactions.columns:
+        df_transactions["tx_fraud_report_date"] = pd.NaT
+    if "card_bin" not in df_transactions.columns:
+        df_transactions["card_bin"] = ""
+    if "latitude" not in df_transactions.columns:
+        df_transactions["latitude"] = np.nan
+    if "longitude" not in df_transactions.columns:
+        df_transactions["longitude"] = np.nan
+
+    if "transaction_id" not in df_transactions.columns:
+        raise HTTPException(
+            status_code=400,
+            detail="Coluna 'transaction_id' não encontrada no arquivo enviado em 'file'."
+        )
+
+    # 3) Guarda lista de IDs na ordem original
+    new_tx_ids = df_transactions["transaction_id"].tolist()
+
+    # 4) Grava em Feather temporário (tx2_path)
+    tx2_path = TMP_DIR / f"tx2_{uuid.uuid4().hex}.feather"
+    df_transactions.to_feather(tx2_path)
+
+    # 5) Feather histórico (“5 M preprocessadas”) vem do bucket: tx1_path
+    tx1_path = state.transactional_path
+
+    # 6) Executa o pipeline completo: retorna df_features com transaction_id preservado
+    try:
+        df_features = process_pipeline(
+            state.payers_path,
+            state.sellers_path,
+            tx1_path,
+            tx2_path
+        )
+    except Exception as e:
+        tx2_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Erro no pipeline de features: {e}")
+
+    # 7) Remove Feather temporário do body
+    tx2_path.unlink(missing_ok=True)
+
+    if df_features.empty:
+        raise HTTPException(status_code=400, detail="Pipeline retornou DataFrame vazio após gerar features.")
+
+    # 8) FILTRA APENAS LINHAS NOVAS (que vieram no body)
+    #    Como agora `process_pipeline` preserva transaction_id, basta:
+    df_new_features = df_features[df_features["transaction_id"].isin(new_tx_ids)].copy()
+    if df_new_features.empty:
+        raise HTTPException(status_code=400, detail="Nenhuma das transaction_id enviadas apareceu no DataFrame de features.")
+
+    # 9) Prepara X_test com apenas as colunas de features (drop transaction_id)
+    X_test = df_new_features.drop(columns=["transaction_id"], errors="ignore")
+
+    # 10) Tenta alinhar colunas com o que o modelo espera
+    try:
+        train_cols = state.model.steps[-1][1].estimators_[0].steps[-1][1].feature_name_
+        X_test = X_test[train_cols]
+        print("[INFO] Ordem das colunas alinhada com o modelo.")
+    except Exception as e:
+        print(f"[WARN] Não foi possível alinhar colunas: {e}. Usando a ordem de df_new_features.")
+
+    # 11) Executa a predição
+    print("[INFO] Iniciando predição...")
+    try:
+        y_proba = state.model.predict_proba(X_test)[:, 1]
+        # Se probabilidade < limiar, tx_approved = True
+        y_pred = (y_proba < FRAUD_THRESHOLD)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro durante a predição: {e}")
+    print("[INFO] Predição concluída.")
+
+    # 12) Monta lista de PredictionResult (na ordem original)
     results_to_log = [
         PredictionResult(
             transaction_id=str(tx_id),
-            approved=not fraud_flag,
-            probability_of_fraud=float(prob)
+            model_score=float(prob),
+            tx_approved=bool(pred_flag),
         )
-        for tx_id, fraud_flag, prob in zip(original_tx_ids, is_fraud, probabilities)
+        for tx_id, prob, pred_flag in zip(new_tx_ids, y_proba, y_pred)
     ]
 
+    # 13) Salva em background no banco de dados
     background_tasks.add_task(log_predictions_to_db, results_to_log, db)
 
+    # 14) Retorna BatchResponse
     return BatchResponse(
-        message="Predições estão sendo processadas e salvas em segundo plano.",
-        transactions_processed=len(df_new)
+        message="Predições processadas com sucesso e salvas em segundo plano.",
+        transactions_processed=len(new_tx_ids),
     )
