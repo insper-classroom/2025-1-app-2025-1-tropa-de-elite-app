@@ -1,0 +1,65 @@
+name: Build e Deploy FastAPI via Docker Hub
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: mateus1711
+      DOCKERHUB_REPOSITORY: mateus1711/fastapi-app
+      IMAGE_TAG: latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Login no Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u $DOCKERHUB_USERNAME --password-stdin
+
+      - name: Build e push da imagem Docker
+        run: |
+          docker build -t $DOCKERHUB_REPOSITORY:$IMAGE_TAG .
+          docker push $DOCKERHUB_REPOSITORY:$IMAGE_TAG
+
+  deploy-to-ec2:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    env:
+      HOST: ${{ secrets.HOST_TEST }}
+      USER: ubuntu    
+      IMAGE_TAG: latest
+      DOCKERHUB_REPOSITORY: mateus1711/fastapi-app
+      DOCKERHUB_USERNAME: mateus1711    steps:
+      - name: Deploy via SSH na EC2
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ env.HOST }}
+          username: ${{ env.USER }}
+          key: ${{ secrets.KEY_TEST }}
+          port: 22
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_REPOSITORY,IMAGE_TAG,DOCKERHUB_TOKEN
+          script: |
+            docker login -u $DOCKERHUB_USERNAME -p "$DOCKERHUB_TOKEN"
+            docker stop fastapi-app || true
+            docker rm fastapi-app || true
+            docker pull $DOCKERHUB_REPOSITORY:$IMAGE_TAG
+            docker run -d \
+              --name fastapi-app \
+              -p 8000:8000 \
+              $DOCKERHUB_REPOSITORY:$IMAGE_TAG
+            docker image prune -f
+        env:
+          DOCKERHUB_USERNAME: ${{ env.DOCKERHUB_USERNAME }}
+          DOCKERHUB_REPOSITORY: ${{ env.DOCKERHUB_REPOSITORY }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+
+
+
+
