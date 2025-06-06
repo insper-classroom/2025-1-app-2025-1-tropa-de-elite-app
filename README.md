@@ -72,7 +72,7 @@ uvicorn main:app --reload
 ### Frontend
 
 ```bash
-cd front_end
+cd project
 npm run dev
 ```
 
