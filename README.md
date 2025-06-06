@@ -49,7 +49,7 @@ python utils/init_data.py
 ### Frontend
 
 ```bash
-cd front_end
+cd project
 npm install
 ```
 
