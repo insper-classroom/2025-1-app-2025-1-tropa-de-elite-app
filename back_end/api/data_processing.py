@@ -170,23 +170,63 @@ def generate_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def add_cardbin_fraud_window(df: pd.DataFrame, window_days: int = 30) -> pd.DataFrame:
+    """
+    Calcula o número de fraudes reportadas para o card_bin de uma transação nos últimos X dias.
+    Esta versão é robusta contra NaNs e não depende da ordenação do DataFrame.
+    """
     df = df.copy()
+
+    # Etapa 1: Lidar com NaNs na coluna de agrupamento.
+    # Preenchemos NaNs com um placeholder para que sejam tratados como um grupo distinto
+    # em vez de serem ignorados pelo groupby.
+    df['card_bin'] = df['card_bin'].fillna('__NAN_PLACEHOLDER__')
+
+    # Etapa 2: Criar um mapa de fraudes por card_bin (eficiente para consulta).
+    # Este mapa contém as datas de reporte de fraude, já ordenadas, para cada card_bin.
     frauds = df.loc[(df['is_fraud']==1) & df['tx_fraud_report_date'].notna(), ['card_bin','tx_fraud_report_date']]
     fraud_map = frauds.groupby('card_bin')['tx_fraud_report_date'].apply(lambda s: np.sort(s.values)).to_dict()
 
-    def count_in_window(times, refs, days):
-        start = refs - np.timedelta64(days,'D')
-        lo = np.searchsorted(times, start, side='left')
-        hi = np.searchsorted(times, refs, side='left')
-        return hi - lo
+    # Etapa 3: Definir a função que será aplicada a cada grupo do groupby.
+    def count_frauds_for_group(group: pd.DataFrame) -> pd.Series:
+        bin_id = group.name  # O nome do grupo é o card_bin
+        
+        # Datas das transações atuais no grupo
+        refs = group['tx_datetime'].values.astype('datetime64[ns]')
+        
+        # Datas de fraude para este card_bin, obtidas do mapa
+        fraud_times = fraud_map.get(bin_id, np.array([], dtype='datetime64[ns]'))
+        
+        # Se não houver fraudes para este bin, o resultado é 0 para todas as transações do grupo.
+        if len(fraud_times) == 0:
+            return pd.Series(0, index=group.index)
 
-    results = []
-    for bin_id, grp in df.groupby('card_bin', sort=False):
-        refs = grp['tx_datetime'].values.astype('datetime64[ns]')
-        times = fraud_map.get(bin_id, np.array([], dtype='datetime64[ns]'))
-        results.append(count_in_window(times, refs, window_days))
+        # Calcula o início da janela de tempo para cada transação
+        window_start = refs - np.timedelta64(window_days, 'D')
+        
+        # Usa searchsorted (muito eficiente) para contar quantas datas de fraude caem na janela [window_start, refs)
+        # para cada transação no grupo.
+        right_indices = np.searchsorted(fraud_times, refs, side='left')
+        left_indices = np.searchsorted(fraud_times, window_start, side='left')
+        
+        counts = right_indices - left_indices
+        
+        # Retorna uma Série com as contagens, mantendo o índice original do grupo.
+        # Isso é crucial para que o Pandas possa realinhar os resultados corretamente.
+        return pd.Series(counts, index=group.index)
 
-    df[f'cardbin_fraud_count_last_{window_days}d'] = np.concatenate(results)
+    # Etapa 4: Usar groupby().apply() para executar o cálculo.
+    # O .apply() itera sobre cada grupo (cada card_bin), chama a função `count_frauds_for_group`,
+    # e depois junta os resultados (que são Séries) em uma única Série final, perfeitamente
+    # alinhada com o índice original do DataFrame `df`.
+    col_name = f'cardbin_fraud_count_last_{window_days}d'
+    # group_keys=False evita que a chave de grupo seja adicionada ao índice do resultado.
+    fraud_counts_series = df.groupby('card_bin', group_keys=False, sort=False).apply(count_frauds_for_group)
+    
+    df[col_name] = fraud_counts_series
+
+    # Etapa 5: Restaurar os NaNs originais na coluna, se desejado.
+    df['card_bin'] = df['card_bin'].replace('__NAN_PLACEHOLDER__', np.nan)
+    
     return df
 
 def generate_card_amount_normalization(df: pd.DataFrame) -> pd.DataFrame:
